@@ -3,10 +3,49 @@
 services:
 
   # ============================================================
+  # Database initialisation - runs once per `up`, then exits.
+  # makemigrations, migrate, then the default superuser. Every app
+  # service waits for this to finish successfully, so nothing serves
+  # requests or runs tasks against an unmigrated database, and only
+  # one process ever migrates. Each step is a no-op when there is
+  # nothing to do, so repeated `up`s are safe. A failure stops the
+  # stack from starting rather than being hidden.
+  # ============================================================
+  init:
+    image: downtime_portal:latest
+    container_name: django_init_down
+
+    command: >
+      sh -c "python manage.py makemigrations --noinput &&
+             python manage.py migrate --noinput &&
+             python manage.py ensure_admin"
+
+    volumes:
+      - .:/app
+
+    environment:
+      - DEBUG=0
+      - CELERY_BROKER_URL=redis://redis_down:6379/0
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_HOST=postgres_down
+      - POSTGRES_PORT=5432
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+    restart: "no"
+
+  # ============================================================
   # Django Web Application
+  # The only service with a build section: every app service runs
+  # this same image, so it is built once rather than once each.
   # ============================================================
   web:
     build: .
+    image: downtime_portal:latest
     container_name: django_app_down
 
     command: gunicorn --bind 0.0.0.0:8550 UploadData.wsgi:application --timeout 120 --workers 3 --access-logfile - --error-logfile -
@@ -27,10 +66,20 @@ services:
       - POSTGRES_PORT=5432
 
     depends_on:
+      init:
+        condition: service_completed_successfully
       redis:
         condition: service_started
       postgres:
         condition: service_healthy
+
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://127.0.0.1:8550/login/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+      start_interval: 2s
 
     restart: always
 
@@ -38,7 +87,7 @@ services:
   # Celery Worker
   # ============================================================
   celery:
-    build: .
+    image: downtime_portal:latest
     container_name: celery_worker_down
 
     command: celery -A UploadData worker --pool=prefork --loglevel=info
@@ -55,6 +104,8 @@ services:
       - POSTGRES_PORT=5432
 
     depends_on:
+      init:
+        condition: service_completed_successfully
       redis:
         condition: service_started
       web:
@@ -70,7 +121,7 @@ services:
   # would fire every schedule twice.
   # ============================================================
   beat:
-    build: .
+    image: downtime_portal:latest
     container_name: celery_beat_down
 
     command: celery -A UploadData beat --loglevel=info
@@ -87,6 +138,8 @@ services:
       - POSTGRES_PORT=5432
 
     depends_on:
+      init:
+        condition: service_completed_successfully
       redis:
         condition: service_started
       web:
@@ -125,6 +178,10 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
+      # Probe every second while the server is starting, so dependants are
+      # released as soon as it is ready instead of after the first 10s interval.
+      start_period: 30s
+      start_interval: 1s
 
     restart: always
 
@@ -144,7 +201,7 @@ services:
   # HRMS Watchdog
   # ============================================================
   hrms_watcher:
-    build: .
+    image: downtime_portal:latest
     container_name: hrms_watcher_down
 
     command: python users/hrms_watcher.py
@@ -162,6 +219,8 @@ services:
       - POSTGRES_PORT=5432
 
     depends_on:
+      init:
+        condition: service_completed_successfully
       web:
         condition: service_started
       postgres:

@@ -7,3 +7,17 @@ db.sqlite3
 media/
 venv/
 staticfiles/
+
+# Version control and editor files: not needed in the image, and they would
+# otherwise invalidate the source layer on every commit or editor save.
+.git/
+.vscode/
+.idea/
+
+# Runtime data written by the running stack. It reaches the containers through
+# the bind mount, and copying it in would rebuild the source layer whenever a
+# log line or database write lands.
+db.sqlite3-*
+db/
+logs/
+celerybeat-schedule*

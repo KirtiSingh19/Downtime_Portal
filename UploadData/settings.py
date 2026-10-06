@@ -221,6 +221,15 @@ L2_PENDING_NOTIFY_EMAIL = os.environ.get(
     'L2_PENDING_NOTIFY_EMAIL', 'akshat.bhatnagar@iccs.in'
 )
 
+# Standing recipients of every HRMS upload success/failure notice, as a
+# comma-separated list. The uploader of the file is always added on top, so an
+# empty value still notifies the person who uploaded it.
+HRMS_NOTIFY_EMAILS = [
+    address.strip()
+    for address in os.environ.get('HRMS_NOTIFY_EMAILS', '').split(',')
+    if address.strip()
+]
+
 # Files uploaded by regular users are not mailed about at upload time; a single
 # digest per stage goes out the next morning and every morning after that, for
 # as long as the file is still waiting. Anything already actioned drops out of
