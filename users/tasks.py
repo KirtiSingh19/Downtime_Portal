@@ -316,7 +316,10 @@ def _notify_hrms_outcome(file_record, original_file, success, hrms_status,
         )
         return False
 
-    recipients = list(settings.HRMS_NOTIFY_EMAILS)
+    # Read defensively: this runs outside the try below, and anything raised
+    # here escapes into upload_to_hrms's error handling, which would roll back
+    # an approval HRMS has already accepted.
+    recipients = list(getattr(settings, "HRMS_NOTIFY_EMAILS", None) or [])
     # The MIS user who uploaded it, taken from the record rather than a list.
     uploader = getattr(getattr(file_record, "uploaded_by", None), "email", "") or ""
     uploader = uploader.strip()

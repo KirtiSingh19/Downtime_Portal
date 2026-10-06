@@ -2439,3 +2439,144 @@ class UploadNotificationEmailTests(DowntimeWorkflowTestCase):
         self.assertIn("sent for approval", text)
         self.assertNotIn("could not be sent", text)
         self.assertEqual(len(mail.outbox), 1)
+
+@override_settings(EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend")
+class AdminCreatedUserPasswordTests(TestCase):
+    """A user an admin creates must be able to log in with the password given.
+
+    CustomUserAdmin used to call set_password() on a password the add form had
+    already hashed, storing a hash of the hash. The user could only get in after
+    a password reset. These go through the real admin, login and reset views.
+    """
+
+    ADMIN_PW = "Boss@pw-12345"
+    NEW_PW = "Fresh!Pass-2026"
+
+    def setUp(self):
+        self.admin_user = User.objects.create_superuser(
+            username="boss", password=self.ADMIN_PW, role="admin",
+        )
+        self.client.force_login(self.admin_user)
+
+    def admin_add_user(self, username="newl1", password=NEW_PW, role="l1",
+                       usable_password="true"):
+        response = self.client.post("/admin/users/user/add/", {
+            "username": username,
+            "usable_password": usable_password,
+            "password1": password,
+            "password2": password,
+            "role": role,
+        })
+        self.assertEqual(response.status_code, 302, "the admin add form was rejected")
+        self.client.logout()
+        return User.objects.get(username=username)
+
+    def site_login(self, username, password):
+        return self.client.post("/login/", {"username": username, "password": password})
+
+    def test_password_is_stored_hashed_once(self):
+        from django.contrib.auth.hashers import identify_hasher
+
+        user = self.admin_add_user()
+
+        self.assertNotEqual(user.password, self.NEW_PW)
+        self.assertEqual(identify_hasher(user.password).algorithm, "pbkdf2_sha256")
+        self.assertTrue(user.check_password(self.NEW_PW))
+        self.assertEqual(user.role, "l1")
+
+    def test_new_user_can_log_in_immediately(self):
+        self.admin_add_user()
+
+        response = self.site_login("newl1", self.NEW_PW)
+
+        self.assertRedirects(response, "/approve/", fetch_redirect_response=False)
+
+    def test_wrong_password_still_fails(self):
+        self.admin_add_user()
+
+        response = self.site_login("newl1", "Not-The-Password-1")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Invalid username or password.")
+        self.assertNotIn("_auth_user_id", self.client.session)
+
+    def test_existing_user_still_logs_in(self):
+        User.objects.create_user(username="olduser", password="Old!Pass-2025", role="regular")
+        self.client.logout()
+
+        response = self.site_login("olduser", "Old!Pass-2025")
+
+        self.assertRedirects(response, "/home/", fetch_redirect_response=False)
+
+    def test_admin_can_create_user_with_password_login_disabled(self):
+        # Django's own "Password-based authentication: Disabled" option. The
+        # old override turned the unusable marker into a usable password.
+        user = self.admin_add_user(username="nopw", password="", usable_password="false")
+
+        self.assertFalse(user.has_usable_password())
+        self.assertEqual(self.site_login("nopw", user.password).status_code, 200)
+
+    def test_editing_a_user_leaves_the_password_alone(self):
+        user = self.admin_add_user()
+        stored = user.password
+        self.client.force_login(self.admin_user)
+
+        response = self.client.post(f"/admin/users/user/{user.pk}/change/", {
+            "username": "newl1",
+            "first_name": "Renamed",
+            "last_name": "",
+            "email": "newl1@iccs.in",
+            "is_active": "on",
+            "date_joined_0": "2026-01-01",
+            "date_joined_1": "10:00:00",
+            "role": "l1",
+        })
+
+        self.assertEqual(response.status_code, 302)
+        user.refresh_from_db()
+        self.assertEqual(user.first_name, "Renamed")
+        self.assertEqual(user.password, stored)
+        self.assertTrue(user.check_password(self.NEW_PW))
+
+    def test_admin_change_password_view_still_works(self):
+        user = self.admin_add_user()
+        self.client.force_login(self.admin_user)
+
+        response = self.client.post(f"/admin/users/user/{user.pk}/password/", {
+            "usable_password": "true",
+            "password1": "Second!Pass-2026",
+            "password2": "Second!Pass-2026",
+        })
+
+        self.assertEqual(response.status_code, 302)
+        self.client.logout()
+        self.assertRedirects(
+            self.site_login("newl1", "Second!Pass-2026"), "/approve/",
+            fetch_redirect_response=False,
+        )
+        self.assertEqual(self.site_login("newl1", self.NEW_PW).status_code, 200)
+
+    def test_password_reset_still_works(self):
+        import re
+        from django.core import mail
+
+        user = self.admin_add_user()
+        User.objects.filter(pk=user.pk).update(email="newl1@iccs.in")
+
+        response = self.client.post("/password_reset/", {"email": "newl1@iccs.in"})
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(len(mail.outbox), 1)
+
+        link = re.search(r"/reset/[^/\s]+/[^/\s]+/", mail.outbox[0].body).group(0)
+        set_password_url = self.client.get(link)["Location"]
+        response = self.client.post(set_password_url, {
+            "new_password1": "Reset!Pass-2026",
+            "new_password2": "Reset!Pass-2026",
+        })
+        self.assertRedirects(response, "/reset/done/", fetch_redirect_response=False)
+
+        self.assertRedirects(
+            self.site_login("newl1", "Reset!Pass-2026"), "/approve/",
+            fetch_redirect_response=False,
+        )
+        self.assertEqual(self.site_login("newl1", self.NEW_PW).status_code, 200)

@@ -21,13 +21,11 @@ class CustomUserAdmin(UserAdmin):
     list_filter = ('role', 'is_staff', 'is_active')  # Add a filter in admin panel
     search_fields = ('username', 'email', 'role')
 
-    def save_model(self, request, obj, form, change):
-        if change:  # Editing an existing user
-            if 'password' in form.changed_data:
-                obj.set_password(obj.password)
-        else:  # Creating a new user
-            obj.set_password(obj.password)
-        super().save_model(request, obj, form, change)
+    # No save_model override: UserAdmin's forms already hash the password
+    # (the add form via set_password, the change-password view via its own
+    # form). Calling set_password again on obj.password re-hashed that hash,
+    # so a user created here could not log in with the password they were
+    # given until they reset it.
 
 admin.site.register(User, CustomUserAdmin)
 
