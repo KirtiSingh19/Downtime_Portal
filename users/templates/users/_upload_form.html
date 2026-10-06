@@ -1,0 +1,68 @@
+{% comment %}
+The upload card: Process, Location and file side by side as three steps.
+
+The steps are numbered because that is the order the declaration reads in, not
+because Location is gated: it offers all 16 sites from the start. Answering
+Step 1 answers Step 2 as well, from media/mapping/mapping.csv, leaving the
+change it only when the process runs at more than one site.
+{% endcomment %}
+<form method="post" enctype="multipart/form-data" class="upload-form panel">
+    {% csrf_token %}
+
+    <div class="panel-head">
+        <div>
+            <h2>Upload downtime file</h2>
+        </div>
+        <a href="/media/reference/Upload_Format.xlsx" class="btn btn-sm" download>Download format</a>
+    </div>
+
+    {% if form.non_field_errors %}
+    <div class="form-errors">{{ form.non_field_errors }}</div>
+    {% endif %}
+
+    <div class="steps">
+        <div class="step" data-step="process">
+            <div class="step-head">
+                <span class="step-num">1</span>
+                <label for="{{ form.process.id_for_label }}">Process</label>
+            </div>
+            {{ form.process }}
+            <p class="step-hint" data-hint="process">
+                Search {{ process_count }} processes by name.
+            </p>
+            <div class="step-error" data-error="process">{{ form.process.errors }}</div>
+        </div>
+
+        <div class="step" data-step="location">
+            <div class="step-head">
+                <span class="step-num">2</span>
+                <label for="{{ form.location.id_for_label }}">Location</label>
+            </div>
+            {{ form.location }}
+            <p class="step-hint" data-hint="location">
+                Search all locations by name.
+            </p>
+            <div class="step-error" data-error="location">{{ form.location.errors }}</div>
+        </div>
+
+        <div class="step" data-step="file">
+            <div class="step-head">
+                <span class="step-num">3</span>
+                <label for="{{ form.file.id_for_label }}">Downtime file</label>
+            </div>
+            {{ form.file }}
+            <p class="step-hint" data-hint="file">
+                CSV or Excel, up to {{ max_upload_rows }} rows, dated within the last {{ max_record_age_days }} days.
+            </p>
+            <div class="step-error" data-error="file">{{ form.file.errors }}</div>
+        </div>
+    </div>
+
+    <div class="form-actions">
+        <p class="form-note">
+            Every ATS ID in the file must belong to the process and location selected above.
+            A file that mixes teams or sites is rejected whole.
+        </p>
+        <button type="submit" class="btn btn-accent">Upload file</button>
+    </div>
+</form>

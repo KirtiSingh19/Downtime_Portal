@@ -1,0 +1,52 @@
+{% extends "users/base.html" %}
+
+{% comment %}
+Shown when a signed-in user reaches something their role does not allow. It names no view and no permission.
+{% endcomment %}
+
+{% block title %}Not permitted{% endblock %}
+
+{% block body %}
+<style>
+    .error-page {
+        max-width: 520px;
+        margin: 90px auto;
+        padding: 32px 34px;
+        background: var(--surface);
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        text-align: center;
+    }
+
+    .error-page .code {
+        font-family: var(--mono);
+        font-size: 13px;
+        letter-spacing: 0.08em;
+        color: var(--ink-3);
+        text-transform: uppercase;
+    }
+
+    .error-page h1 {
+        margin: 10px 0 12px;
+        font-size: 22px;
+        letter-spacing: -0.01em;
+    }
+
+    .error-page p {
+        margin: 0 0 22px;
+        color: var(--ink-2);
+        line-height: 1.55;
+    }
+</style>
+
+<main>
+    <div class="error-page">
+        <div class="code">Error 403</div>
+        <h1>Not permitted</h1>
+        <p>
+            Your account does not have access to that page. If you believe it should, ask your administrator to check your role.
+        </p>
+        <a href="{% url 'user_login' %}" class="btn btn-accent">Back to the portal</a>
+    </div>
+</main>
+{% endblock %}

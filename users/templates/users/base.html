@@ -1,0 +1,564 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Downtime Portal{% endblock %}</title>
+    <style>
+/*
+Shared look and feel for the Downtime portal.
+
+This file carries its own style element, and pages include it in HTML context
+rather than inside a style element of their own. A template tag in CSS context
+is not valid CSS: editors flag it, and a CSS formatter rewrites the tag's
+opening brace as a block open, which silently drops this whole stylesheet.
+
+The project has no collectstatic step in its Docker build, so styles stay in the
+templates rather than moving to a static file that would 404 the day DEBUG is
+turned off.
+
+Palette: a cool grey console with a single warm accent carried over from the
+existing ICCS red-orange. One accent only - it marks the thing you act on.
+Data - ATS IDs, file names, timestamps - is set in mono so codes line up
+column to column and are quick to compare.
+
+Held here rather than in an included partial. A template tag sitting directly
+in the head is text, where only metadata elements are allowed; the same tag
+sitting in CSS is not valid CSS. Inlining is the one placement that is neither.
+Note there is deliberately no template syntax in this comment: a CSS comment
+does not hide one from the template engine.
+
+Each page adds its own CSS at the top of its body block, which comes after this
+in document order, so page rules still win ties against these.
+*/
+:root {
+    --ink: #14181d;
+    --ink-2: #4a555f;
+    --ink-3: #7c8791;
+    --canvas: #eaeef2;
+    --surface: #ffffff;
+    --surface-2: #f6f8fa;
+    --line: #d8dfe6;
+    --line-soft: #e9edf1;
+
+    --accent: #c2410c;
+    --accent-dark: #9a3412;
+    --accent-wash: #fdf1ea;
+
+    --ok: #15803d;
+    --ok-wash: #eaf6ee;
+    --warn: #a55a00;
+    --warn-wash: #fdf3e3;
+    --bad: #b4231c;
+    --bad-wash: #fdecea;
+    --focus: #2563eb;
+
+    --ui: "Segoe UI Variable Display", "Segoe UI", system-ui, -apple-system,
+          "Helvetica Neue", Arial, sans-serif;
+    --mono: "Cascadia Mono", "Cascadia Code", Consolas, ui-monospace,
+            "SF Mono", Menlo, monospace;
+
+    --radius: 10px;
+    --radius-sm: 6px;
+}
+
+* { box-sizing: border-box; }
+
+body {
+    margin: 0;
+    padding: 0;
+    background: var(--canvas);
+    color: var(--ink);
+    font-family: var(--ui);
+    font-size: 14px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+}
+
+/* ---------- header ---------- */
+
+.app-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 0 24px;
+    height: 56px;
+    background: var(--ink);
+    color: #fff;
+}
+
+.app-header .brand {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    min-width: 0;
+}
+
+.app-header .brand-mark {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: #fff;
+    background: var(--accent);
+    padding: 3px 7px;
+    border-radius: 4px;
+    white-space: nowrap;
+}
+
+.app-header h1 {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    color: #fff;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.app-header .sub {
+    font-size: 12px;
+    color: #98a3ad;
+    white-space: nowrap;
+}
+
+.header-right {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+}
+
+.header-right a {
+    display: inline-block;
+    padding: 6px 12px;
+    border-radius: var(--radius-sm);
+    font-size: 13px;
+    font-weight: 500;
+    text-decoration: none;
+    color: #e6eaee;
+    border: 1px solid #333c45;
+    background: transparent;
+    transition: background 0.12s ease, border-color 0.12s ease;
+}
+
+.header-right a:hover {
+    background: #232a31;
+    border-color: #4a555f;
+}
+
+.header-right a.danger,
+.header-right a.btn-danger {
+    border-color: transparent;
+    background: var(--accent);
+    color: #fff;
+}
+
+.header-right a.danger:hover {
+    background: var(--accent-dark);
+}
+
+/* ---------- layout ---------- */
+
+main {
+    width: 100%;
+    max-width: 1320px;
+    margin: 24px auto 48px;
+    padding: 0 24px;
+}
+
+.panel {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    overflow: hidden;
+}
+
+.panel + .panel { margin-top: 20px; }
+
+.panel-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 14px 20px;
+    border-bottom: 1px solid var(--line-soft);
+}
+
+.panel-head h2 {
+    margin: 0;
+    font-size: 14px;
+    font-weight: 650;
+    letter-spacing: -0.005em;
+    color: var(--ink);
+    border: 0;
+    padding: 0;
+}
+
+.eyebrow {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+}
+
+/* ---------- buttons ---------- */
+
+/* Single-class selector on purpose: qualifying this as button.btn would
+   outrank every .btn-* variant below and flatten them all to the base look. */
+.btn {
+    -webkit-appearance: none;
+    appearance: none;
+    display: inline-block;
+    padding: 7px 14px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    background: var(--surface);
+    color: var(--ink);
+    font-family: var(--ui);
+    font-size: 13px;
+    font-weight: 550;
+    line-height: 1.4;
+    text-decoration: none;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+}
+
+.btn:hover { background: var(--surface-2); border-color: var(--ink-3); }
+
+.btn-accent {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+}
+
+.btn-accent:hover { background: var(--accent-dark); border-color: var(--accent-dark); }
+
+.btn-primary { background: var(--surface); border-color: var(--line); color: var(--ink); }
+.btn-primary:hover { background: var(--surface-2); border-color: var(--ink-3); }
+
+.btn-success { background: var(--ok); border-color: var(--ok); color: #fff; }
+.btn-success:hover { background: #11642f; border-color: #11642f; }
+
+.btn-danger { background: var(--surface); border-color: var(--line); color: var(--bad); }
+.btn-danger:hover { background: var(--bad-wash); border-color: var(--bad); }
+
+.btn-warning { background: var(--bad); border-color: var(--bad); color: #fff; }
+.btn-warning:hover { background: #921b15; border-color: #921b15; }
+
+.btn-sm { padding: 4px 10px; font-size: 12px; }
+
+:where(a, button, input, select, textarea):focus-visible {
+    outline: 2px solid var(--focus);
+    outline-offset: 2px;
+}
+
+/* ---------- tabs ---------- */
+
+.tabs,
+.tab-container {
+    display: flex;
+    gap: 2px;
+    margin-bottom: 16px;
+    border-bottom: 1px solid var(--line);
+    overflow-x: auto;
+}
+
+.tab {
+    position: relative;
+    padding: 10px 16px;
+    border: 0;
+    background: transparent;
+    color: var(--ink-2);
+    font-family: var(--ui);
+    font-size: 13px;
+    font-weight: 550;
+    cursor: pointer;
+    white-space: nowrap;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -1px;
+    transition: color 0.12s ease, border-color 0.12s ease;
+}
+
+.tab:hover { color: var(--ink); }
+
+.tab.active {
+    color: var(--accent);
+    border-bottom-color: var(--accent);
+    background: transparent;
+}
+
+.tab-content { display: none; }
+.tab-content.active { display: block; }
+
+/* ---------- tables ---------- */
+
+table {
+    width: 100%;
+    border-collapse: collapse;
+    background: var(--surface);
+    font-size: 13px;
+}
+
+thead th,
+table tr:first-child th {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    padding: 9px 16px;
+    background: var(--surface-2);
+    border-bottom: 1px solid var(--line);
+    color: var(--ink-3);
+    font-family: var(--mono);
+    font-size: 10.5px;
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    text-align: left;
+    white-space: nowrap;
+}
+
+/* Cells hold codes, names and times that mean less once broken across lines,
+   so the table keeps them whole and scrolls sideways instead. Free text opts
+   back into wrapping with .wrap. */
+td {
+    padding: 11px 16px;
+    border-bottom: 1px solid var(--line-soft);
+    color: var(--ink);
+    vertical-align: middle;
+    white-space: nowrap;
+}
+
+td.wrap {
+    white-space: normal;
+    min-width: 200px;
+    max-width: 340px;
+}
+
+tbody tr:last-child td,
+table tr:last-child td { border-bottom: 0; }
+
+tr:nth-child(even) { background: transparent; }
+tbody tr:hover,
+table tr:hover td { background: var(--surface-2); }
+table tr:first-child:hover th { background: var(--surface-2); }
+
+/* Codes, file names and timestamps read as data, not prose. */
+.mono,
+td.mono { font-family: var(--mono); font-size: 12px; }
+
+.filename {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--ink);
+}
+
+.cell-actions {
+    display: flex;
+    gap: 6px;
+    flex-wrap: nowrap;
+    align-items: center;
+}
+
+.muted { color: var(--ink-3); }
+
+.table-scroll {
+    max-height: 620px;
+    overflow: auto;
+}
+
+/* ---------- status pills ---------- */
+
+.pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 9px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.pill::before {
+    content: "";
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: currentColor;
+}
+
+.pill-pending { background: var(--warn-wash); color: var(--warn); }
+.pill-ok { background: var(--ok-wash); color: var(--ok); }
+.pill-bad { background: var(--bad-wash); color: var(--bad); }
+
+/* Legacy hooks kept so existing markup keeps its meaning. */
+.approved { color: var(--ok); font-weight: 600; }
+.pending { color: var(--warn); font-weight: 600; }
+.text-danger { color: var(--bad); font-weight: 600; }
+
+.tag {
+    display: inline-block;
+    padding: 2px 8px;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    background: var(--surface-2);
+    font-size: 12px;
+    color: var(--ink-2);
+    white-space: nowrap;
+}
+
+/* ---------- alerts ---------- */
+
+.alerts-container { margin-bottom: 16px; display: grid; gap: 8px; }
+
+.alert {
+    padding: 11px 14px;
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--ink-3);
+    border-radius: var(--radius-sm);
+    background: var(--surface);
+    color: var(--ink);
+    font-size: 13px;
+    text-align: left;
+}
+
+.alert.success { border-left-color: var(--ok); background: var(--ok-wash); color: #11532b; }
+.alert.error { border-left-color: var(--bad); background: var(--bad-wash); color: #8c1a15; }
+.alert.warning { border-left-color: var(--warn); background: var(--warn-wash); color: #7d4400; }
+
+.no-files,
+.empty {
+    margin: 0;
+    padding: 40px 20px;
+    text-align: center;
+    color: var(--ink-3);
+    font-size: 13px;
+}
+
+/* ---------- searchable dropdown ----------
+   Built by JS around the real <select>, which keeps its name, value and
+   required flag. With JS off the plain select shows instead. */
+
+.combo { position: relative; display: block; width: 100%; }
+
+.combo-input {
+    width: 100%;
+    padding: 9px 30px 9px 11px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    background: var(--surface);
+    color: var(--ink);
+    font-family: var(--ui);
+    font-size: 13.5px;
+    line-height: 1.4;
+    transition: border-color 0.12s ease, box-shadow 0.12s ease;
+}
+
+.combo-input:hover { border-color: var(--ink-3); }
+
+.combo-input:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-wash);
+}
+
+.combo-input::placeholder { color: var(--ink-3); }
+
+.combo-toggle {
+    position: absolute;
+    top: 0;
+    right: 0;
+    height: 100%;
+    width: 28px;
+    border: 0;
+    background: transparent;
+    color: var(--ink-3);
+    font-size: 10px;
+    cursor: pointer;
+    padding: 0;
+}
+
+.combo-toggle:hover { color: var(--ink); }
+
+.combo-list {
+    display: none;
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    right: 0;
+    max-height: 260px;
+    overflow-y: auto;
+    margin: 0;
+    padding: 4px;
+    list-style: none;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    box-shadow: 0 8px 24px rgba(20, 24, 29, 0.12);
+    z-index: 50;
+}
+
+.combo.open .combo-list { display: block; }
+
+.combo-list li {
+    padding: 7px 10px;
+    border-radius: 4px;
+    font-size: 13px;
+    cursor: pointer;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.combo-list li.active { background: var(--accent-wash); color: var(--accent-dark); }
+.combo-list li.selected { font-weight: 650; }
+
+/* "Select" - the state the field is in, not a name in the list. */
+.combo-list li.combo-blank {
+    color: var(--ink-3);
+    font-style: italic;
+}
+
+/* A site the chosen process actually runs at. These sort to the top; the first
+   row below them carries the rule that divides the two groups. */
+.combo-list li.combo-mapped { font-weight: 550; }
+
+.combo-list li.combo-sep {
+    border-top: 1px solid var(--line-soft);
+    border-radius: 0 0 4px 4px;
+    margin-top: 3px;
+    padding-top: 9px;
+}
+
+.combo-list li.combo-none {
+    color: var(--ink-3);
+    font-style: italic;
+    cursor: default;
+}
+
+.combo-list li.combo-none.active { background: transparent; color: var(--ink-3); }
+
+@media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; animation: none !important; }
+}
+
+@media (max-width: 720px) {
+    main { padding: 0 14px; margin-top: 16px; }
+    .app-header { height: auto; padding: 10px 14px; flex-wrap: wrap; gap: 8px; }
+    .app-header .sub { display: none; }
+    td, thead th { padding-left: 12px; padding-right: 12px; }
+}
+    </style>
+</head>
+
+<body>
+{% block body %}{% endblock %}
+</body>
+
+</html>

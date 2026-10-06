@@ -1,0 +1,176 @@
+# version: '3.8'
+
+services:
+
+  # ============================================================
+  # Django Web Application
+  # ============================================================
+  web:
+    build: .
+    container_name: django_app_down
+
+    command: gunicorn --bind 0.0.0.0:8550 UploadData.wsgi:application --timeout 120 --workers 3 --access-logfile - --error-logfile -
+
+    volumes:
+      - .:/app
+
+    ports:
+      - "8550:8550"
+
+    environment:
+      - DEBUG=0
+      - CELERY_BROKER_URL=redis://redis_down:6379/0
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_HOST=postgres_down
+      - POSTGRES_PORT=5432
+
+    depends_on:
+      redis:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+
+    restart: always
+
+  # ============================================================
+  # Celery Worker
+  # ============================================================
+  celery:
+    build: .
+    container_name: celery_worker_down
+
+    command: celery -A UploadData worker --pool=prefork --loglevel=info
+
+    volumes:
+      - .:/app
+
+    environment:
+      - CELERY_BROKER_URL=redis://redis_down:6379/0
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_HOST=postgres_down
+      - POSTGRES_PORT=5432
+
+    depends_on:
+      redis:
+        condition: service_started
+      web:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+
+    restart: always
+
+  # ============================================================
+  # Celery beat - fires the scheduled tasks (the 10:00 IST pending
+  # reminders). Separate from the worker on purpose: a second beat
+  # would fire every schedule twice.
+  # ============================================================
+  beat:
+    build: .
+    container_name: celery_beat_down
+
+    command: celery -A UploadData beat --loglevel=info
+
+    volumes:
+      - .:/app
+
+    environment:
+      - CELERY_BROKER_URL=redis://redis_down:6379/0
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_HOST=postgres_down
+      - POSTGRES_PORT=5432
+
+    depends_on:
+      redis:
+        condition: service_started
+      web:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+
+    restart: always
+
+  # ============================================================
+  # PostgreSQL. Replaces the SQLite file, which could not take
+  # concurrent writes from gunicorn's workers, the Celery worker,
+  # django_celery_results and the HRMS watcher all at once - least
+  # of all over a Windows bind mount, where SQLite's file locks are
+  # not honoured reliably. That is what surfaced in the HRMS task
+  # as "database is locked".
+  # ============================================================
+  postgres:
+    image: postgres:16-alpine
+    container_name: postgres_down
+
+    environment:
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+
+    # A named volume, not a bind mount: the database must not sit on the
+    # host filesystem whose locking semantics caused the original problem.
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+    # The app containers wait on this rather than crash-looping until the
+    # server finishes its first-run initialisation.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+    restart: always
+
+  # ============================================================
+  # Redis
+  # ============================================================
+  redis:
+    image: redis:alpine
+    container_name: redis_down
+
+    ports:
+      - "6380:6379"
+
+    restart: always
+
+  # ============================================================
+  # HRMS Watchdog
+  # ============================================================
+  hrms_watcher:
+    build: .
+    container_name: hrms_watcher_down
+
+    command: python users/hrms_watcher.py
+
+    volumes:
+      - .:/app
+
+    environment:
+      - DEBUG=0
+      - CELERY_BROKER_URL=redis://redis_down:6379/0
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_HOST=postgres_down
+      - POSTGRES_PORT=5432
+
+    depends_on:
+      web:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+
+    restart: always
+
+# ============================================================
+# Volumes
+# ============================================================
+volumes:
+  postgres_data:

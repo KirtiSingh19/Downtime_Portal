@@ -1,0 +1,378 @@
+{% extends "users/base.html" %}
+{% load tz downtime_extras %}
+
+{% block title %}L2 Pending Approvals{% endblock %}
+
+{% block body %}
+<style>
+    /* Reject opens a small inline form in place of the row's buttons. */
+    .reject-form {
+        display: none;
+        align-items: center;
+        gap: 8px;
+        margin-top: 8px;
+    }
+
+    .reject-form.open {
+        display: flex;
+    }
+
+    .reject-form textarea {
+        flex: 1;
+        min-width: 200px;
+        min-height: 34px;
+        height: 34px;
+        padding: 7px 10px;
+        border: 1px solid var(--line);
+        border-radius: var(--radius-sm);
+        font-family: var(--ui);
+        font-size: 13px;
+        resize: vertical;
+    }
+
+    .reject-form textarea:focus {
+        outline: none;
+        border-color: var(--bad);
+        box-shadow: 0 0 0 3px var(--bad-wash);
+    }
+
+    .count {
+        font-family: var(--mono);
+        font-size: 11px;
+        padding: 2px 7px;
+        border-radius: 999px;
+        background: var(--accent-wash);
+        color: var(--accent-dark);
+    }
+
+    /* L2 approval is the point of no return, so the page says so once, up top. */
+    .notice {
+        display: flex;
+        align-items: flex-start;
+        gap: 10px;
+        padding: 11px 14px;
+        margin-bottom: 16px;
+        border: 1px solid var(--line);
+        border-left: 3px solid var(--accent);
+        border-radius: var(--radius-sm);
+        background: var(--surface);
+        font-size: 13px;
+        color: var(--ink-2);
+    }
+
+    .notice strong {
+        color: var(--ink);
+        font-weight: 600;
+    }
+</style>
+
+<header class="app-header">
+    <div class="brand">
+        <span class="brand-mark">L2</span>
+        <h1>Downtime Approvals</h1>
+    </div>
+    <div class="header-right">
+        <a href="{% url 'profile' %}">Profile</a>
+        <a href="{% url 'user_logout' %}" class="danger">Log out</a>
+    </div>
+</header>
+
+<main>
+    {% if message %}
+    <p class="no-files">{{ message }}</p>
+    {% else %}
+
+    {% if messages %}
+    <div class="alerts-container">
+        {% for message in messages %}
+        <div class="alert {% if message.tags %}{{ message.tags }}{% endif %}">
+            {{ message }}
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    <div class="tab-container">
+        <button class="tab active" onclick="openTab(event, 'pending')">
+            Pending Approvals for Unlock Files
+            {% if files %}<span class="count">{{ files|length }}</span>{% endif %}
+        </button>
+        <button class="tab" onclick="openTab(event, 'locked')">
+            Pending Approvals for Lock Files
+            {% if locked_files %}<span class="count">{{ locked_files|length }}</span>{% endif %}
+        </button>
+        <button class="tab" onclick="openTab(event, 'history')">File Status</button>
+    </div>
+
+    <div id="pending" class="tab-content active">
+        <div class="panel">
+            {% if files %}
+            <div class="table-scroll">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>File</th>
+                            <th>Process</th>
+                            <th>Location</th>
+                            <th>Uploaded by</th>
+                            <th>L1 status</th>
+                            <th>Set by L1</th>
+                            <th>Uploaded</th>
+                            <th>Status</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for file in files|dictsortreversed:"timestamp" %}
+                        <tr>
+                            <td class="filename" title="{{ file.file.name }}">{{ file.file.name|basename }}</td>
+                            <td>{{ file.process|default:"—" }}</td>
+                            <td>{{ file.location|default:"—" }}</td>
+                            <td class="mono">{{ file.uploaded_by.username }}</td>
+                            <td>
+                                {% if file.l1_status == 'unlock' %}
+                                <span class="pill pill-ok">Unlock</span>
+                                {% else %}
+                                <span class="pill pill-bad">Lock</span>
+                                {% endif %}
+                            </td>
+                            <td class="mono">{{ file.l1_status_by.username|default:"—" }}</td>
+                            <td class="mono muted">{{ file.timestamp|timezone:"Asia/Kolkata"|date:"d-m-Y H:i" }}</td>
+                            <td>
+                                {% if not file.source_available %}
+                                <span class="pill pill-bad">Source missing</span>
+                                {% elif file.last_delivery_error %}
+                                {% comment %}
+                                This file was approved before and came back:
+                                the delivery to HRMS failed and the approval
+                                was rolled back. Saying so stops it looking
+                                like a file nobody has touched.
+                                {% endcomment %}
+                                {% comment %}
+                                A locked attendance period is reported in
+                                HRMS's own words, so it reads as the
+                                business state it is rather than as a
+                                delivery fault. Matched on the reason
+                                HRMS returned - lower-cased so a change of
+                                capitalisation on their side still hits.
+                                Every other failure keeps its own message.
+                                {% endcomment %}
+                                {% if 'already processed' in file.last_delivery_error|lower %}
+                                <span class="pill pill-bad">Attendance is already Processed</span>
+                                <div class="muted wrap" style="margin-top:4px; font-size:12px;">
+                                    <strong>HRMS Locked</strong><br>
+                                    Attempt {{ file.delivery_attempts }} &middot;
+                                    {{ file.last_delivery_attempt_at|timezone:"Asia/Kolkata"|date:"d-m-Y H:i" }}
+                                </div>
+                                {% else %}
+                                <span class="pill pill-bad">Delivery failed</span>
+                                <div class="muted wrap" style="margin-top:4px; font-size:12px;">
+                                    {{ file.last_delivery_error }}<br>
+                                    Attempt {{ file.delivery_attempts }} &middot;
+                                    {{ file.last_delivery_attempt_at|timezone:"Asia/Kolkata"|date:"d-m-Y H:i" }}
+                                </div>
+                                {% endif %}
+                                {% else %}
+                                <span class="pill pill-pending">Pending L2</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <div class="cell-actions">
+                                    <a href="{% url 'view_file' file.id %}" class="btn btn-sm btn-primary">View</a>
+                                    <a href="{{ file.file.url }}" download class="btn btn-sm">Download</a>
+                                    {% if file.source_available %}
+                                    <form method="POST" style="display:inline;">
+                                        {% csrf_token %}
+                                        <input type="hidden" name="file_id" value="{{ file.id }}">
+                                        <button type="submit" name="approve"
+                                            class="btn btn-sm btn-success">Approve</button>
+                                    </form>
+                                    <button type="button" class="btn btn-sm btn-danger"
+                                        onclick="showRejectForm('{{ file.id }}')">Reject</button>
+                                    {% else %}
+                                    <span class="muted">Contents no longer available &mdash; re-upload required</span>
+                                    {% endif %}
+                                </div>
+                                <form method="POST" id="reject-form-{{ file.id }}" class="reject-form">
+                                    {% csrf_token %}
+                                    <input type="hidden" name="file_id" value="{{ file.id }}">
+                                    <textarea name="rejection_reason" placeholder="Why is this being rejected?"
+                                        required></textarea>
+                                    <button type="submit" name="reject" class="btn btn-sm btn-warning">Confirm
+                                        reject</button>
+                                </form>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <p class="no-files">No unlocked files are waiting for your approval.</p>
+            {% endif %}
+        </div>
+    </div>
+
+    <div id="locked" class="tab-content">
+        <div class="panel">
+            {% if locked_files %}
+            <div class="table-scroll">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>File</th>
+                            <th>Process</th>
+                            <th>Location</th>
+                            <th>Uploaded by</th>
+                            <th>L1 status</th>
+                            <th>Uploaded</th>
+                            <th>Status</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for file in locked_files|dictsortreversed:"timestamp" %}
+                        <tr>
+                            <td class="filename" title="{{ file.file.name }}">{{ file.file.name|basename }}</td>
+                            <td>{{ file.process|default:"—" }}</td>
+                            <td>{{ file.location|default:"—" }}</td>
+                            <td class="mono">{{ file.uploaded_by.username }}</td>
+                            <td><span class="pill pill-bad">Lock</span></td>
+                            <td class="mono muted">{{ file.timestamp|timezone:"Asia/Kolkata"|date:"d-m-Y H:i" }}</td>
+                            <td><span class="pill pill-pending">Waiting for L1 unlock</span></td>
+                            <td>
+                                {% comment %}
+                                Read-only by design: a file L1 has not unlocked
+                                carries no Approve or Reject here, and the view
+                                refuses either action on it as well.
+                                {% endcomment %}
+                                <div class="cell-actions">
+                                    <a href="{% url 'view_file' file.id %}" class="btn btn-sm btn-primary">View</a>
+                                    <a href="{{ file.file.url }}" download class="btn btn-sm">Download</a>
+                                </div>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <p class="no-files">No locked files are waiting on L1.</p>
+            {% endif %}
+        </div>
+    </div>
+
+    <div id="history" class="tab-content">
+        <div class="panel">
+            {% if approved_files or rejected_files %}
+            <div class="table-scroll">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>File</th>
+                            <th>Process</th>
+                            <th>Location</th>
+                            <th>Uploaded by</th>
+                            <th>L1 status</th>
+                            <th>Uploaded</th>
+                            <th>Status</th>
+                            <th>Decided</th>
+                            <th>Reason if rejected</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for file in approved_files|dictsortreversed:"approved_at_l2" %}
+                        <tr>
+                            <td class="filename" title="{{ file.file.name }}">{{ file.file.name|basename }}</td>
+                            <td>{{ file.process|default:"—" }}</td>
+                            <td>{{ file.location|default:"—" }}</td>
+                            <td class="mono">{{ file.uploaded_by.username }}</td>
+                            <td>
+                                {% if file.l1_status == 'unlock' %}
+                                <span class="pill pill-ok">Unlock</span>
+                                {% else %}
+                                <span class="pill pill-bad">Lock</span>
+                                {% endif %}
+                            </td>
+                            <td class="mono muted">{{ file.timestamp|timezone:"Asia/Kolkata"|date:"d-m-Y H:i" }}</td>
+                            <td><span class="pill pill-ok">Sent to HRMS</span></td>
+                            <td class="mono muted">{{ file.approved_at_l2|timezone:"Asia/Kolkata"|date:"d-m-Y H:i" }}
+                            </td>
+                            <td><span class="muted">—</span></td>
+                            <td>
+                                <div class="cell-actions">
+                                    <a href="{% url 'view_file' file.id %}" class="btn btn-sm btn-primary">View</a>
+                                    <a href="{{ file.file.url }}" download class="btn btn-sm">Download</a>
+                                </div>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                        {% for file in rejected_files|dictsortreversed:"rejected_at_l2" %}
+                        <tr>
+                            <td class="filename" title="{{ file.file.name }}">{{ file.file.name|basename }}</td>
+                            <td>{{ file.process|default:"—" }}</td>
+                            <td>{{ file.location|default:"—" }}</td>
+                            <td class="mono">{{ file.uploaded_by.username }}</td>
+                            <td>
+                                {% if file.l1_status == 'unlock' %}
+                                <span class="pill pill-ok">Unlock</span>
+                                {% else %}
+                                <span class="pill pill-bad">Lock</span>
+                                {% endif %}
+                            </td>
+                            <td class="mono muted">{{ file.timestamp|timezone:"Asia/Kolkata"|date:"d-m-Y H:i" }}</td>
+                            <td><span class="pill pill-bad">Rejected</span></td>
+                            <td class="mono muted">{{ file.rejected_at_l2|timezone:"Asia/Kolkata"|date:"d-m-Y H:i" }}
+                            </td>
+                            <td class="wrap">{{ file.rejection_reason_l2 }}</td>
+                            <td>
+                                <div class="cell-actions">
+                                    <a href="{% url 'view_file' file.id %}" class="btn btn-sm btn-primary">View</a>
+                                    <a href="{{ file.file.url }}" download class="btn btn-sm">Download</a>
+                                </div>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <p class="no-files">You have not approved or rejected anything yet.</p>
+            {% endif %}
+        </div>
+    </div>
+
+    {% endif %}
+</main>
+
+<script>
+    setTimeout(function () {
+        let alerts = document.querySelectorAll(".alert");
+        alerts.forEach(alert => alert.style.display = "none");
+    }, 8000); // Hides the alert after 8 seconds
+</script>
+<script>
+    function showRejectForm(fileId) {
+        var form = document.getElementById("reject-form-" + fileId);
+        form.classList.add("open");
+        var box = form.querySelector("textarea");
+        if (box) { box.focus(); }
+    }
+</script>
+<script>
+    function openTab(event, tabName) {
+        var i, tabContent, tabButtons;
+        tabContent = document.getElementsByClassName("tab-content");
+        for (i = 0; i < tabContent.length; i++) {
+            tabContent[i].classList.remove("active");
+        }
+        tabButtons = document.getElementsByClassName("tab");
+        for (i = 0; i < tabButtons.length; i++) {
+            tabButtons[i].classList.remove("active");
+        }
+        document.getElementById(tabName).classList.add("active");
+        event.currentTarget.classList.add("active");
+    }
+</script>
+{% endblock %}

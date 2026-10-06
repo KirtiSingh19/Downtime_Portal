@@ -1,0 +1,205 @@
+{% extends "users/base.html" %}
+{% load tz downtime_extras %}
+
+{% block title %}Downtime File Status{% endblock %}
+
+{% block body %}
+<style>
+/* The one thing L1 does to a row: pick Lock or Unlock and save it. */
+.status-form {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.status-form select {
+    padding: 6px 8px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    background: var(--surface);
+    color: var(--ink);
+    font-family: var(--ui);
+    font-size: 13px;
+}
+
+.status-form select:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-wash);
+}
+
+.count {
+    font-family: var(--mono);
+    font-size: 11px;
+    padding: 2px 7px;
+    border-radius: 999px;
+    background: var(--accent-wash);
+    color: var(--accent-dark);
+}
+    
+</style>
+
+    <header class="app-header">
+        <div class="brand">
+            <span class="brand-mark">L1</span>
+            <h1>Downtime File Status</h1>
+        </div>
+        <div class="header-right">
+            <a href="{% url 'profile' %}">Profile</a>
+            <a href="{% url 'user_logout' %}" class="danger">Log out</a>
+        </div>
+    </header>
+
+    <main>
+        {% if message %}
+            <p class="no-files">{{ message }}</p>
+        {% else %}
+
+        {% if messages %}
+            <div class="alerts-container">
+                {% for message in messages %}
+                    <div class="alert {% if message.tags %}{{ message.tags }}{% endif %}">
+                        {{ message }}
+                    </div>
+                {% endfor %}
+            </div>
+        {% endif %}
+
+        <div class="tab-container">
+            <button class="tab active" onclick="openTab(event, 'pending')">
+                Files to mark {% if files %}<span class="count">{{ files|length }}</span>{% endif %}
+            </button>
+            <button class="tab" onclick="openTab(event, 'history')">File Status</button>
+        </div>
+
+        <div id="pending" class="tab-content active">
+            <div class="panel">
+                {% if files %}
+                <div class="table-scroll">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>File</th>
+                                <th>Process</th>
+                                <th>Location</th>
+                                <th>Uploaded by</th>
+                                <th>Uploaded</th>
+                                <th>Status</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                        {% for file in files|dictsortreversed:"timestamp" %}
+                            <tr>
+                                <td class="filename" title="{{ file.file.name }}">{{ file.file.name|basename }}</td>
+                                <td>{{ file.process|default:"—" }}</td>
+                                <td>{{ file.location|default:"—" }}</td>
+                                <td class="mono">{{ file.uploaded_by.username }}</td>
+                                <td class="mono muted">{{ file.timestamp|timezone:"Asia/Kolkata"|date:"d-m-Y H:i" }}</td>
+                                <td>
+                                    {% if file.l1_status == 'unlock' %}
+                                        <span class="pill pill-ok">Unlock</span>
+                                    {% else %}
+                                        <span class="pill pill-bad">Lock</span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    <div class="cell-actions">
+                                        <a href="{% url 'view_file' file.id %}" class="btn btn-sm btn-primary">View</a>
+                                        <a href="{{ file.file.url }}" download class="btn btn-sm">Download</a>
+                                        <form method="POST" class="status-form">
+                                            {% csrf_token %}
+                                            <input type="hidden" name="file_id" value="{{ file.id }}">
+                                            <button type="submit" name="unlock_and_save" class="btn btn-sm btn-accent">
+                                                Unlock and Save
+                                            </button>
+                                        </form>
+                                    </div>
+                                </td>
+                            </tr>
+                        {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <p class="no-files">Nothing waiting for a status.</p>
+                {% endif %}
+            </div>
+        </div>
+
+        <div id="history" class="tab-content">
+            <div class="panel">
+                {% if decided_files %}
+                <div class="table-scroll">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>File</th>
+                                <th>Process</th>
+                                <th>Location</th>
+                                <th>Uploaded by</th>
+                                <th>Status</th>
+                                <th>Uploaded</th>
+                                <th>Decided</th>
+                                <th>View</th>
+                                <th>Download</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                        {% for file in decided_files|dictsortreversed:"l1_status_at" %}
+                            <tr>
+                                <td class="filename" title="{{ file.file.name }}">{{ file.file.name|basename }}</td>
+                                <td>{{ file.process|default:"—" }}</td>
+                                <td>{{ file.location|default:"—" }}</td>
+                                <td class="mono">{{ file.uploaded_by.username }}</td>
+                                <td>
+                                    {% if file.l1_status == 'unlock' %}
+                                        <span class="pill pill-ok">Unlock</span>
+                                    {% else %}
+                                        <span class="pill pill-bad">Lock</span>
+                                    {% endif %}
+                                </td>
+                                <td class="mono muted">{{ file.timestamp|timezone:"Asia/Kolkata"|date:"d-m-Y H:i" }}</td>
+                                <td class="mono muted">{{ file.l1_status_at|timezone:"Asia/Kolkata"|date:"d-m-Y H:i" }}</td>
+                                <td>
+                                    <a href="{% url 'view_file' file.id %}" class="btn btn-sm btn-primary">View</a>
+                                </td>
+                                <td>
+                                    <a href="{{ file.file.url }}" download class="btn btn-sm">Download</a>
+                                </td>
+                            </tr>
+                        {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <p class="no-files">You have not unlocked anything yet.</p>
+                {% endif %}
+            </div>
+        </div>
+
+        {% endif %}
+    </main>
+
+    <script>
+    setTimeout(function() {
+      let alerts = document.querySelectorAll(".alert");
+      alerts.forEach(alert => alert.style.display = "none");
+    }, 8000); // Hides the alert after 8 seconds
+  </script>
+<script>
+    function openTab(event, tabName) {
+        var i, tabContent, tabButtons;
+        tabContent = document.getElementsByClassName("tab-content");
+        for (i = 0; i < tabContent.length; i++) {
+            tabContent[i].classList.remove("active");
+        }
+        tabButtons = document.getElementsByClassName("tab");
+        for (i = 0; i < tabButtons.length; i++) {
+            tabButtons[i].classList.remove("active");
+        }
+        document.getElementById(tabName).classList.add("active");
+        event.currentTarget.classList.add("active");
+    }
+</script>
+{% endblock %}

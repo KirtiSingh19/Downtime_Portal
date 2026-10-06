@@ -1,0 +1,149 @@
+{% extends "users/base.html" %}
+{% load tz %}
+
+{% block title %}View File - {{ file_name }}{% endblock %}
+
+{% block body %}
+<style>
+/* File facts read as a row of labelled figures above the contents. */
+.facts {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1px;
+    background: var(--line-soft);
+    border-bottom: 1px solid var(--line-soft);
+}
+
+.fact {
+    flex: 1 1 150px;
+    min-width: 0;
+    padding: 13px 18px;
+    background: var(--surface);
+}
+
+.fact .k {
+    display: block;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    margin-bottom: 3px;
+}
+
+.fact .v {
+    font-size: 13.5px;
+    font-weight: 600;
+    color: var(--ink);
+    word-break: break-word;
+}
+
+.fact .v.mono { font-weight: 500; }
+
+.preview-table td { white-space: nowrap; }
+.preview-table td.rownum {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--ink-3);
+    text-align: right;
+    width: 1%;
+    background: var(--surface-2);
+}
+
+.note {
+    margin: 0;
+    padding: 10px 18px;
+    background: var(--warn-wash);
+    border-bottom: 1px solid var(--line-soft);
+    color: var(--warn);
+    font-size: 12.5px;
+}
+
+.error-box {
+    margin: 0;
+    padding: 40px 20px;
+    text-align: center;
+    color: var(--bad);
+    font-size: 13px;
+}
+    
+</style>
+
+    <header class="app-header">
+        <div class="brand">
+            <span class="brand-mark">Downtime</span>
+            <h1>File contents</h1>
+        </div>
+        <div class="header-right">
+            <a href="javascript:history.back()">Back</a>
+        </div>
+    </header>
+
+    <main>
+        <div class="panel">
+            <div class="facts">
+                <div class="fact">
+                    <span class="k">File</span>
+                    <span class="v mono">{{ file_name }}</span>
+                </div>
+                <div class="fact">
+                    <span class="k">Process</span>
+                    <span class="v">{{ uploaded_file.process|default:"—" }}</span>
+                </div>
+                <div class="fact">
+                    <span class="k">Location</span>
+                    <span class="v">{{ uploaded_file.location|default:"—" }}</span>
+                </div>
+                <div class="fact">
+                    <span class="k">Uploaded by</span>
+                    <span class="v mono">{{ uploaded_file.uploaded_by.username }}</span>
+                </div>
+                <div class="fact">
+                    <span class="k">Uploaded</span>
+                    <span class="v mono">{{ uploaded_file.timestamp|timezone:"Asia/Kolkata"|date:"d M Y, H:i" }}</span>
+                </div>
+                {% if total_rows is not None %}
+                <div class="fact">
+                    <span class="k">Rows</span>
+                    <span class="v mono">{{ total_rows }}</span>
+                </div>
+                {% endif %}
+            </div>
+
+            {% if error %}
+                <p class="error-box">{{ error }}</p>
+            {% else %}
+                {% if truncated %}
+                    <p class="note">Showing the first {{ preview_max_rows }} of {{ total_rows }} rows.</p>
+                {% endif %}
+
+                {% if columns %}
+                <div class="table-scroll">
+                    <table class="preview-table">
+                        <thead>
+                            <tr>
+                                <th></th>
+                                {% for column in columns %}
+                                    <th>{{ column }}</th>
+                                {% endfor %}
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for row in rows %}
+                            <tr>
+                                <td class="rownum">{{ forloop.counter }}</td>
+                                {% for cell in row %}
+                                    <td class="mono">{{ cell }}</td>
+                                {% endfor %}
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                    <p class="no-files">This file has no rows to display.</p>
+                {% endif %}
+            {% endif %}
+        </div>
+    </main>
+{% endblock %}
