@@ -1,0 +1,57 @@
+{% extends "users/base.html" %}
+
+{% comment %}
+Shown for any address the portal does not recognise, e.g. /approve-l2/ffdg.
+
+Deliberately says nothing technical: no URL patterns, no file paths, no view
+names. Django's own detailed page is only used when DEBUG is on, which it is
+not in the running stack.
+{% endcomment %}
+
+{% block title %}Page not found{% endblock %}
+
+{% block body %}
+<style>
+    .error-page {
+        max-width: 520px;
+        margin: 90px auto;
+        padding: 32px 34px;
+        background: var(--surface);
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        text-align: center;
+    }
+
+    .error-page .code {
+        font-family: var(--mono);
+        font-size: 13px;
+        letter-spacing: 0.08em;
+        color: var(--ink-3);
+        text-transform: uppercase;
+    }
+
+    .error-page h1 {
+        margin: 10px 0 12px;
+        font-size: 22px;
+        letter-spacing: -0.01em;
+    }
+
+    .error-page p {
+        margin: 0 0 22px;
+        color: var(--ink-2);
+        line-height: 1.55;
+    }
+</style>
+
+<main>
+    <div class="error-page">
+        <div class="code">Error 404</div>
+        <h1>Page not found</h1>
+        <p>
+            The address you entered does not exist on this portal. Check the
+            link, or go back and continue from there.
+        </p>
+        <a href="{% url 'user_login' %}" class="btn btn-accent">Back to the portal</a>
+    </div>
+</main>
+{% endblock %}

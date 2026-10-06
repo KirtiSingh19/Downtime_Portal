@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>User Profile</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background: #f4f4f9;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+        }
+
+        .profile-container {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0px 4px 10px rgba(0, 0, 0, 0.1);
+            text-align: center;
+            width: 350px;
+        }
+
+        h2 {
+            color: black;
+            margin: 15px;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 20px;
+        }
+
+        th, td {
+            border: 1px solid #ddd;
+            padding: 10px;
+            text-align: left;
+        }
+
+        th {
+            background: black;
+            color: white;
+        }
+
+        td {
+            background: #f9f9f9;
+        }
+
+        .btn-container {
+            display: flex;
+            justify-content: space-between;
+        }
+
+        .btn {
+            display: inline-block;
+            padding: 10px 15px;
+            color: white;
+            text-decoration: none;
+            border-radius: 5px;
+            font-size: 14px;
+            transition: 0.3s;
+            width: 48%;
+            text-align: center;
+        }
+
+        .logout-btn {
+            background: #d9534f;
+            padding: 6px;
+            font-size: 20px;
+        }
+
+        .logout-btn:hover {
+            background: #c9302c;
+        }
+
+        .home-btn {
+            background: #007bff;
+            padding: 6px;
+            font-size: 20px;
+        }
+
+        .home-btn:hover {
+            background: #0056b3;
+        }
+    </style>
+</head>
+<body>
+    <div class="profile-container">
+        <h2>User Profile</h2>
+        <table>
+            <tr>
+                <th>Field</th>
+                <th>Details</th>
+            </tr>
+            <tr>
+                <td><strong>Username</strong></td>
+                <td>{{ user.username }}</td>
+            </tr>
+            <tr>
+                <td><strong>Email</strong></td>
+                <td>{{ user.email }}</td>
+            </tr>
+            <tr>
+                <td><strong>Full Name</strong></td>
+                <td>{{ user.first_name }} {{ user.last_name }}</td>
+            </tr>
+            <!-- <tr>
+                <td><strong>Role</strong></td>
+                <td>{{ user.role }}</td>
+            </tr> -->
+        </table>
+
+        <div class="btn-container">
+            {% if user_role == "regular" %}
+                <a href="{% url 'home' %}" class="btn home-btn">Home</a>
+            {% elif user_role == "l2" %}
+                <a href="{% url 'approve_files_l2' %}" class="btn home-btn">Home</a>
+            {% else %}
+                <a href="{% url 'approve_files' %}" class="btn home-btn">Home</a>
+            {% endif %}
+            <a href="{% url 'user_logout' %}" class="btn logout-btn">Logout</a>
+        </div>
+    </div>
+</body>
+</html>

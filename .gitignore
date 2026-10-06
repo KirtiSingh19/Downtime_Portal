@@ -1,0 +1,58 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environment
+venv/
+env/
+*.venv/
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Django specific
+*.log
+db.sqlite3
+/media/
+*.pyc
+*.pyo
+__pycache__/
+
+# Environment variables
+.env
+*.env
+
+# Static and media files
+staticfiles/
+static/
+media/
+
+# VS Code
+.vscode/
+.settings/
+*.code-workspace
+
+# IDE files
+*.sublime-project
+*.sublime-workspace
+.idea/
+
+# PyCharm
+*.iml
+*.ipr
+*.iws
+
+# MacOS
+.DS_Store
+
+# Windows
+Thumbs.db
+desktop.ini
+
+# Git
+.git/
+
+# Local data, logs and generated runtime files
+db/
+logs/
+celerybeat-schedule*

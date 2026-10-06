@@ -1,0 +1,930 @@
+{% extends "users/base.html" %}
+{% load tz downtime_extras %}
+
+{% block title %}Bulk Downtime Upload{% endblock %}
+
+{% block body %}
+<style>
+        /* ---------- upload card ----------
+   Three steps across, so the whole declaration reads as one line: which team,
+   which site, which file. Stacks on narrow screens. */
+
+        /* The panel clips its corners, which would also clip an open dropdown, so this
+   one lets its children overflow and the bottom bar rounds itself instead. */
+        .upload-form {
+            margin-bottom: 20px;
+            overflow: visible;
+        }
+
+        .steps {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.15fr);
+        }
+
+        .step {
+            padding: 18px 20px;
+            border-right: 1px solid var(--line-soft);
+            min-width: 0;
+        }
+
+        .step:last-child {
+            border-right: 0;
+        }
+
+        .step-head {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 9px;
+        }
+
+        .step-num {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 20px;
+            height: 20px;
+            border: 1px solid var(--line);
+            border-radius: 5px;
+            background: var(--surface-2);
+            color: var(--ink-3);
+            font-family: var(--mono);
+            font-size: 11px;
+            font-weight: 600;
+            flex-shrink: 0;
+            transition: background 0.14s ease, color 0.14s ease, border-color 0.14s ease;
+        }
+
+        .step-head label {
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--ink);
+            letter-spacing: -0.005em;
+            cursor: pointer;
+        }
+
+        /* Step is answerable now. */
+        .step.is-ready .step-num {
+            background: var(--ink);
+            border-color: var(--ink);
+            color: #fff;
+        }
+
+        /* Step is answered. */
+        .step.is-set .step-num {
+            background: var(--accent);
+            border-color: var(--accent);
+            color: #fff;
+        }
+
+        .step-hint {
+            margin: 7px 0 0;
+            font-size: 12px;
+            color: var(--ink-3);
+            line-height: 1.45;
+        }
+
+        .step.is-set .step-hint {
+            color: var(--ink-2);
+        }
+
+        /* A hint carrying a conflict - a location the chosen process does not run at.
+   Outranks the is-set colour above, so the warning is not swallowed by it. */
+        .step .step-hint.is-warn {
+            color: var(--bad);
+            font-weight: 550;
+        }
+
+        .step-error:empty {
+            display: none;
+        }
+
+        .step-error ul.errorlist,
+        .form-errors ul.errorlist {
+            margin: 7px 0 0;
+            padding: 0;
+            list-style: none;
+            font-size: 12px;
+            color: var(--bad);
+            font-weight: 550;
+        }
+
+        .form-errors {
+            padding: 0 20px;
+            margin-top: 14px;
+        }
+
+        .form-errors ul.errorlist {
+            margin: 0;
+        }
+
+        /* File input: dashed edge marks the one field you drop something into. */
+        .step input[type="file"] {
+            width: 100%;
+            padding: 7px 10px;
+            border: 1px dashed var(--line);
+            border-radius: var(--radius-sm);
+            background: var(--surface);
+            color: var(--ink-2);
+            font-family: var(--ui);
+            font-size: 12.5px;
+            cursor: pointer;
+            transition: border-color 0.12s ease, background 0.12s ease;
+        }
+
+        .step input[type="file"]:hover {
+            border-color: var(--ink-3);
+        }
+
+        .step input[type="file"]::file-selector-button {
+            margin-right: 10px;
+            padding: 5px 11px;
+            border: 1px solid var(--line);
+            border-radius: 5px;
+            background: var(--surface-2);
+            color: var(--ink);
+            font-family: var(--ui);
+            font-size: 12.5px;
+            font-weight: 550;
+            cursor: pointer;
+        }
+
+        .step input[type="file"]::file-selector-button:hover {
+            background: #eef1f4;
+        }
+
+        .step.is-set input[type="file"] {
+            border-style: solid;
+            border-color: var(--accent);
+            background: var(--accent-wash);
+        }
+
+        .form-actions {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 20px;
+            padding: 14px 20px;
+            border-top: 1px solid var(--line-soft);
+            background: var(--surface-2);
+            border-radius: 0 0 var(--radius) var(--radius);
+        }
+
+        .form-note {
+            margin: 0;
+            font-size: 12px;
+            color: var(--ink-2);
+            max-width: 62ch;
+        }
+
+        @media (max-width: 900px) {
+            .steps {
+                grid-template-columns: 1fr;
+            }
+
+            .step {
+                border-right: 0;
+                border-bottom: 1px solid var(--line-soft);
+            }
+
+            .step:last-child {
+                border-bottom: 0;
+            }
+
+            .form-actions {
+                flex-direction: column;
+                align-items: stretch;
+                gap: 12px;
+            }
+
+            .form-actions .btn {
+                width: 100%;
+                text-align: center;
+            }
+        }
+    
+</style>
+
+    <header class="app-header">
+        <div class="brand">
+            <span class="brand-mark">Downtime</span>
+            <h1>Bulk Downtime Upload</h1>
+        </div>
+        <div class="header-right">
+            <a href="{% url 'profile' %}">Profile</a>
+            <a href="{% url 'user_logout' %}" class="danger">Log out</a>
+        </div>
+    </header>
+
+    <main>
+        {% if message %}
+        <p class="no-files">{{ message }}</p>
+        {% else %}
+
+        {% if messages or inactive_ats_error %}
+        <div class="alerts-container">
+            {% for message in messages %}
+            <div class="alert {% if message.tags %}{{ message.tags }}{% endif %}">
+                {{ message }}
+            </div>
+            {% endfor %}
+            {% comment %}
+            Held in the session rather than the messages framework, so it is
+            still here after a refresh. The next upload attempt clears it.
+            {% endcomment %}
+            {% if inactive_ats_error %}
+            <div class="alert error">{{ inactive_ats_error }}</div>
+            {% endif %}
+        </div>
+        {% endif %}
+
+        {% include "users/_upload_form.html" %}
+
+        <div class="tabs">
+            <button class="tab active" onclick="openTab(event, 'pending')">Pending approval</button>
+            <button class="tab" onclick="openTab(event, 'history')">History</button>
+            <button class="tab" onclick="openTab(event, 'uploaded')">Files you uploaded</button>
+        </div>
+
+        <div id="pending" class="tab-content active">
+            <div class="panel">
+                <div class="table-scroll">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>File</th>
+                                <th>Process</th>
+                                <th>Location</th>
+                                <th>Uploaded</th>
+                                <th>Status</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for file in files|dictsortreversed:"timestamp" %}
+                            {% if not file.l1_status and not file.rejected_by_l1 and file.is_split %}
+                            <tr>
+                                <td class="filename" title="{{ file.file.name }}">{{ file.file.name|basename }}</td>
+                                <td>{{ file.process|default:"—" }}</td>
+                                <td>{{ file.location|default:"—" }}</td>
+                                <td class="mono muted">{{ file.timestamp|timezone:"Asia/Kolkata"|date:"d-m-Y H:i" }}
+                                </td>
+                                <td><span class="pill pill-pending">Waiting for L1 status</span></td>
+                                <td>
+                                    <div class="cell-actions">
+                                        <a href="{% url 'view_file' file.id %}" class="btn btn-sm btn-primary">View</a>
+                                        <a href="{{ file.file.url }}" download class="btn btn-sm">Download</a>
+                                    </div>
+                                </td>
+                            </tr>
+                            {% endif %}
+                            {% empty %}
+                            <tr>
+                                <td colspan="6" class="no-files">Nothing waiting for approval.</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <div id="history" class="tab-content">
+            <div class="panel">
+                <div class="table-scroll">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>File</th>
+                                <th>Process</th>
+                                <th>Location</th>
+                                <th>Uploaded</th>
+                                <th>Status</th>
+                                <th>Decided</th>
+                                <th>Reason if rejected</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for file in files|dictsortreversed:"timestamp" %}
+                            {% if file.is_split %}
+                            <tr>
+                                <td class="filename" title="{{ file.file.name }}">{{ file.file.name|basename }}</td>
+                                <td>{{ file.process|default:"—" }}</td>
+                                <td>{{ file.location|default:"—" }}</td>
+                                <td class="mono muted">{{ file.timestamp|timezone:"Asia/Kolkata"|date:"d-m-Y H:i" }}
+                                </td>
+                                <td>
+                                    {% if file.approved_by_l2 %}
+                                    <span class="pill pill-ok">Approved</span>
+                                    {% elif file.rejected_by_l2 or file.rejected_by_l1 %}
+                                    <span class="pill pill-bad">Rejected</span>
+                                    {% elif file.l1_status == 'lock' %}
+                                    <span class="pill pill-pending">Lock &middot; with L2</span>
+                                    {% elif file.l1_status == 'unlock' %}
+                                    <span class="pill pill-pending">Unlock &middot; with L2</span>
+                                    {% else %}
+                                    <span class="pill pill-pending">Waiting for L1 status</span>
+                                    {% endif %}
+                                </td>
+                                <td class="mono muted">
+                                    {% if file.approved_by_l2 %}
+                                    {{ file.approved_at_l2|timezone:"Asia/Kolkata"|date:"d-m-Y H:i" }}
+                                    {% elif file.rejected_by_l2 %}
+                                    {{ file.rejected_at_l2|timezone:"Asia/Kolkata"|date:"d-m-Y H:i" }}
+                                    {% elif file.rejected_by_l1 %}
+                                    {{ file.rejected_at|timezone:"Asia/Kolkata"|date:"d-m-Y H:i" }}
+                                    {% else %}
+                                    —
+                                    {% endif %}
+                                </td>
+                                <td class="wrap">
+                                    {% if file.rejected_by_l2 %}
+                                    {{ file.rejection_reason_l2 }}
+                                    {% elif file.rejected_by_l1 %}
+                                    {{ file.rejection_reason }}
+                                    {% else %}
+                                    <span class="muted">—</span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    <div class="cell-actions">
+                                        <a href="{% url 'view_file' file.id %}" class="btn btn-sm btn-primary">View</a>
+                                        <a href="{{ file.file.url }}" download class="btn btn-sm">Download</a>
+                                    </div>
+                                </td>
+                            </tr>
+                            {% endif %}
+                            {% empty %}
+                            <tr>
+                                <td colspan="8" class="no-files">No uploads yet.</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <div id="uploaded" class="tab-content">
+            <div class="panel">
+                <div class="table-scroll">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>File</th>
+                                <th>Process</th>
+                                <th>Location</th>
+                                <th>Uploaded</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for file in files|dictsortreversed:"timestamp" %}
+                            {% if not file.is_split %}
+                            <tr>
+                                <td class="filename" title="{{ file.file.name }}">{{ file.file.name|basename }}</td>
+                                <td>{{ file.process|default:"—" }}</td>
+                                <td>{{ file.location|default:"—" }}</td>
+                                <td class="mono muted">{{ file.timestamp|timezone:"Asia/Kolkata"|date:"d-m-Y H:i" }}
+                                </td>
+                                <td>
+                                    <div class="cell-actions">
+                                        <a href="{% url 'view_file' file.id %}" class="btn btn-sm btn-primary">View</a>
+                                        <a href="{{ file.file.url }}" download class="btn btn-sm">Download</a>
+                                    </div>
+                                </td>
+                            </tr>
+                            {% endif %}
+                            {% empty %}
+                            <tr>
+                                <td colspan="5" class="no-files">No files uploaded yet.</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        {% endif %}
+    </main>
+
+    {{ process_location_map|json_script:"process-location-map" }}
+
+    <script>
+    setTimeout(function () {
+        let alerts = document.querySelectorAll(".alert");
+        alerts.forEach(alert => alert.style.display = "none");
+    }, 8000); // Hides the alert after 8 seconds
+</script>
+<script>
+    function openTab(event, tabName) {
+        let tabs = document.querySelectorAll(".tab-content");
+        let buttons = document.querySelectorAll(".tab");
+        tabs.forEach(tab => tab.classList.remove("active"));
+        buttons.forEach(btn => btn.classList.remove("active"));
+        document.getElementById(tabName).classList.add("active");
+        event.currentTarget.classList.add("active");
+    }
+</script>
+<script>
+    /*
+     * Upload form dropdowns.
+     *
+     * Two behaviours, both layered on top of the real <select> elements rendered by
+     * Django. The selects keep their name and their value, so the form posts and
+     * validates exactly as it did before and the page still works with JavaScript
+     * disabled - the plain selects are simply shown instead.
+     *
+     *  1. Cascade  - picking a Process answers Location for you, per
+     *                media/mapping/mapping.csv: the one site 81 of the 89
+     *                at, or the first of the two or three the other 8 run at.
+     *                Location still lists all 16 sites either way, with the ones
+     *                mapped to the process at the top, so the answer can be
+     *                changed - to a site the process does not run at too, which
+     *                the field flags and the server refuses.
+     *  2. Search   - each select gains a type-to-filter combo box, which matters
+     *                most for the 89-entry Process list.
+     */
+    (function () {
+        "use strict";
+
+        var mapNode = document.getElementById("process-location-map");
+        if (!mapNode) {
+            return;  // Nothing to drive the cascade with; leave the plain selects be.
+        }
+
+        var PROCESS_LOCATIONS;
+        try {
+            PROCESS_LOCATIONS = JSON.parse(mapNode.textContent) || {};
+        } catch (err) {
+            return;  // Malformed payload: fall back to the untouched selects.
+        }
+
+        // Matched case- and whitespace-insensitively, mirroring the server.
+        var byNormalisedProcess = {};
+        Object.keys(PROCESS_LOCATIONS).forEach(function (name) {
+            byNormalisedProcess[normalise(name)] = PROCESS_LOCATIONS[name];
+        });
+
+        function normalise(value) {
+            return String(value == null ? "" : value).trim().replace(/\s+/g, " ").toLowerCase();
+        }
+
+        function locationsFor(process) {
+            if (!process) { return null; }
+            return byNormalisedProcess[normalise(process)] || null;
+        }
+
+        function option(value, label, mapped) {
+            var opt = document.createElement("option");
+            opt.value = value;
+            opt.textContent = label;
+            if (mapped) { opt.setAttribute("data-mapped", "1"); }
+            return opt;
+        }
+
+        /* ---------------- searchable combo box ---------------- */
+
+        function makeSearchable(select, placeholder) {
+            var combo = document.createElement("div");
+            combo.className = "combo";
+
+            var input = document.createElement("input");
+            input.type = "text";
+            input.className = "combo-input";
+            input.autocomplete = "off";
+            var basePlaceholder = placeholder;
+            input.placeholder = basePlaceholder;
+            input.setAttribute("role", "combobox");
+            input.setAttribute("aria-expanded", "false");
+            if (select.id) {
+                // The label points at the select; move it to the box people type in.
+                input.id = select.id + "_search";
+                var label = document.querySelector('label[for="' + select.id + '"]');
+                if (label) { label.setAttribute("for", input.id); }
+            }
+            // Deliberately nameless: only the underlying <select> is submitted.
+
+            var toggle = document.createElement("button");
+            toggle.type = "button";  // never submits the form
+            toggle.className = "combo-toggle";
+            toggle.tabIndex = -1;
+            toggle.textContent = "▼";
+            toggle.setAttribute("aria-hidden", "true");
+
+            var list = document.createElement("ul");
+            list.className = "combo-list";
+            list.setAttribute("role", "listbox");
+
+            select.parentNode.insertBefore(combo, select);
+            combo.appendChild(input);
+            combo.appendChild(toggle);
+            combo.appendChild(list);
+            combo.appendChild(select);
+            select.style.display = "none";
+            select.tabIndex = -1;
+            // The select is hidden, so the browser cannot show a native validation
+            // bubble against it. Required-ness is enforced by the submit handler
+            // below and, definitively, by the server.
+            select.removeAttribute("required");
+
+            var activeIndex = -1;
+            var visible = [];
+
+            function realOptions() {
+                return Array.prototype.filter.call(select.options, function (opt) {
+                    return opt.value !== "";
+                });
+            }
+
+            function blankOption() {
+                return Array.prototype.filter.call(select.options, function (opt) {
+                    return opt.value === "";
+                })[0] || null;
+            }
+
+            // "Select" heads the list only while the field is empty and nothing is
+            // being typed: it names the state the field is in, and among a filtered
+            // set of real names it would only be noise.
+            function listOptions(needle) {
+                var opts = realOptions().filter(function (opt) {
+                    return !needle || normalise(opt.textContent).indexOf(needle) !== -1;
+                });
+                if (!needle && !select.value) {
+                    var blank = blankOption();
+                    if (blank) { opts.unshift(blank); }
+                }
+                return opts;
+            }
+
+            function selectedLabel() {
+                var opt = select.options[select.selectedIndex];
+                return opt && opt.value !== "" ? opt.textContent : "";
+            }
+
+            function draw(filter) {
+                var needle = normalise(filter);
+                list.innerHTML = "";
+                visible = listOptions(needle);
+
+                if (!visible.length) {
+                    var none = document.createElement("li");
+                    none.className = "combo-none";
+                    none.textContent = realOptions().length ? "No match" : "No options available";
+                    list.appendChild(none);
+                    activeIndex = -1;
+                    return;
+                }
+
+                var seenMapped = false;
+                visible.forEach(function (opt, i) {
+                    var li = document.createElement("li");
+                    var mapped = opt.hasAttribute("data-mapped");
+                    var classes = [];
+
+                    li.textContent = opt.value === "" ? "Select" : opt.textContent;
+                    li.setAttribute("role", "option");
+                    if (opt.value === "") {
+                        classes.push("combo-blank");
+                    } else {
+                        if (opt.value === select.value) { classes.push("selected"); }
+                        if (mapped) {
+                            classes.push("combo-mapped");
+                            seenMapped = true;
+                        } else if (seenMapped) {
+                            // First row past the sites this process runs at: a rule
+                            // above it separates "for this process" from "the rest".
+                            classes.push("combo-sep");
+                            seenMapped = false;
+                        }
+                    }
+                    if (classes.length) { li.className = classes.join(" "); }
+                    // mousedown, not click: it fires before the input's blur.
+                    li.addEventListener("mousedown", function (event) {
+                        event.preventDefault();
+                        commit(opt.value);
+                        close();
+                    });
+                    li.addEventListener("mouseenter", function () {
+                        highlight(i);
+                    });
+                    list.appendChild(li);
+                });
+
+                var current = visible.findIndex(function (opt) {
+                    return opt.value !== "" && opt.value === select.value;
+                });
+                if (current === -1) {
+                    current = visible.findIndex(function (opt) { return opt.value !== ""; });
+                }
+                highlight(current === -1 ? 0 : current);
+            }
+
+            function highlight(index) {
+                var items = list.querySelectorAll("li:not(.combo-none)");
+                for (var i = 0; i < items.length; i++) {
+                    items[i].classList.toggle("active", i === index);
+                }
+                activeIndex = index;
+                if (items[index]) {
+                    var li = items[index];
+                    if (li.offsetTop < list.scrollTop) {
+                        list.scrollTop = li.offsetTop;
+                    } else if (li.offsetTop + li.offsetHeight > list.scrollTop + list.clientHeight) {
+                        list.scrollTop = li.offsetTop + li.offsetHeight - list.clientHeight;
+                    }
+                }
+            }
+
+            function open() {
+                if (combo.classList.contains("open")) { return; }
+                combo.classList.add("open");
+                input.setAttribute("aria-expanded", "true");
+                // Clear the box rather than leave the chosen name in it: the list
+                // opens complete, and the first keystroke filters from scratch
+                // instead of appending to a name that is already there.
+                input.placeholder = selectedLabel() || basePlaceholder;
+                input.value = "";
+                draw("");
+            }
+
+            function close() {
+                combo.classList.remove("open");
+                input.setAttribute("aria-expanded", "false");
+                input.placeholder = basePlaceholder;
+                input.value = selectedLabel();  // drop any half-typed filter
+            }
+
+            function commit(value) {
+                if (select.value === value) {
+                    input.value = selectedLabel();
+                    return;
+                }
+                select.value = value;
+                input.value = selectedLabel();
+                // Lets the cascade react exactly as it would to a manual change.
+                select.dispatchEvent(new Event("change", { bubbles: true }));
+            }
+
+            input.addEventListener("focus", open);
+            input.addEventListener("click", open);
+            input.addEventListener("input", function () {
+                combo.classList.add("open");
+                draw(input.value);
+            });
+            input.addEventListener("keydown", function (event) {
+                if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+                    event.preventDefault();
+                    if (!combo.classList.contains("open")) { open(); return; }
+                    var step = event.key === "ArrowDown" ? 1 : -1;
+                    var next = activeIndex + step;
+                    if (next < 0) { next = visible.length - 1; }
+                    if (next >= visible.length) { next = 0; }
+                    highlight(next);
+                } else if (event.key === "Enter") {
+                    if (combo.classList.contains("open")) {
+                        // Swallow it, otherwise Enter would submit the form.
+                        event.preventDefault();
+                        if (visible[activeIndex]) {
+                            commit(visible[activeIndex].value);
+                        }
+                        close();
+                    }
+                } else if (event.key === "Escape") {
+                    if (combo.classList.contains("open")) {
+                        event.preventDefault();
+                        close();
+                    }
+                }
+            });
+            input.addEventListener("blur", function () {
+                window.setTimeout(close, 0);
+            });
+            toggle.addEventListener("mousedown", function (event) {
+                event.preventDefault();
+                if (combo.classList.contains("open")) {
+                    close();
+                } else {
+                    // open() before focus(), for the same reason: when the input is
+                    // already focused, focus() alone raises no event to open on.
+                    input.focus();
+                    open();
+                }
+            });
+
+            input.value = selectedLabel();
+
+            return {
+                focus: function () { input.focus(); },
+                // Called after the cascade rewrites the option list.
+                refresh: function () {
+                    input.value = selectedLabel();
+                    if (combo.classList.contains("open")) {
+                        draw(input.value);
+                    }
+                }
+            };
+        }
+
+        /* ---------------- Process -> Location cascade ---------------- */
+
+        function wire(form, index) {
+            var processSelect = form.querySelector('select[name="process"]');
+            var locationSelect = form.querySelector('select[name="location"]');
+            var fileInput = form.querySelector('input[type="file"]');
+            if (!processSelect || !locationSelect) { return; }
+
+            var steps = {
+                process: form.querySelector('[data-step="process"]'),
+                location: form.querySelector('[data-step="location"]'),
+                file: form.querySelector('[data-step="file"]')
+            };
+            var hints = {
+                location: form.querySelector('[data-hint="location"]')
+            };
+            var errors = {
+                process: form.querySelector('[data-error="process"]'),
+                location: form.querySelector('[data-error="location"]'),
+                file: form.querySelector('[data-error="file"]')
+            };
+
+            // Two of the three fields are hidden behind combo boxes, so the browser
+            // cannot show its own "please fill this in" bubble against them. Turn
+            // native validation off and report all three the same way, inline. Only
+            // reached when this script runs; with JS off the plain required selects
+            // and their native messages are what the user gets.
+            form.noValidate = true;
+
+            // The full list as the server rendered it. Kept so an unrecognised
+            // process never strands the user with an empty Location dropdown.
+            var allLocations = Array.prototype.map.call(locationSelect.options, function (opt) {
+                return { value: opt.value, label: opt.textContent };
+            }).filter(function (opt) {
+                return opt.value !== "";
+            });
+
+            var processCombo = makeSearchable(processSelect, "Type to search…");
+            var locationCombo = makeSearchable(locationSelect, "Type to search…");
+
+            function setState(step, state) {
+                if (!step) { return; }
+                step.classList.remove("is-ready", "is-set");
+                step.classList.add(state);
+            }
+
+            function clearError(name) {
+                if (errors[name]) { errors[name].innerHTML = ""; }
+            }
+
+            function showError(name, text) {
+                if (!errors[name]) { return; }
+                errors[name].innerHTML = '<ul class="errorlist"><li></li></ul>';
+                errors[name].querySelector("li").textContent = text;
+            }
+
+            // Every location, always, with the sites this process runs at first.
+            // The list is never cut down: a site that is wrong for the process stays
+            // reachable, and the server is what refuses the upload.
+            function orderedLocations(process) {
+                var allowed = locationsFor(process) || [];
+                var mapped = allowed.map(function (name) {
+                    // Prefer the option the server rendered, so the value posted back
+                    // matches the workbook exactly rather than the mapping's casing.
+                    var known = allLocations.filter(function (opt) {
+                        return normalise(opt.value) === normalise(name);
+                    })[0];
+                    return known || { value: name, label: name };
+                });
+                var isMapped = {};
+                mapped.forEach(function (opt) { isMapped[normalise(opt.value)] = true; });
+                var rest = allLocations.filter(function (opt) {
+                    return !isMapped[normalise(opt.value)];
+                });
+                return { mapped: mapped, rest: rest };
+            }
+
+            function describeLocation() {
+                if (!hints.location) { return; }
+                var process = processSelect.value;
+                var allowed = locationsFor(process);
+                var value = locationSelect.value;
+                var offMap = !!value && !!allowed && allowed.length > 0
+                    && allowed.every(function (name) {
+                        return normalise(name) !== normalise(value);
+                    });
+
+                hints.location.classList.toggle("is-warn", offMap);
+                if (offMap) {
+                    hints.location.textContent =
+                        "“" + value + "” is not a site for this process. Allowed: "
+                        + allowed.join(", ") + ".";
+                } else if (!process) {
+                    hints.location.textContent =
+                        "Search all " + allLocations.length + " locations by name.";
+                } else if (!allowed || !allowed.length) {
+                    // No mapped location for this process (should not happen with the
+                    // current workbook). Every location stays on offer; the ATS ID
+                    // check still has the final say.
+                    hints.location.textContent = "No location mapped for this process.";
+                } else if (allowed.length === 1) {
+                    hints.location.textContent = "Auto-selected: this process runs at one site.";
+                } else {
+                    hints.location.textContent =
+                        "Auto-selected. This process runs at " + allowed.length
+                        + " sites - change it if this is not the one.";
+                }
+            }
+
+            // autofill is true only when the user just changed Process. On page load
+            // it is false, so a form coming back from a failed upload keeps the
+            // location the user actually chose instead of being overwritten.
+            function cascade(autofill) {
+                var process = processSelect.value;
+                var grouped = orderedLocations(process);
+                var previous = locationSelect.value;
+
+                locationSelect.innerHTML = "";
+                locationSelect.appendChild(option("", "--- Select Location ---"));
+                grouped.mapped.forEach(function (opt) {
+                    locationSelect.appendChild(option(opt.value, opt.label, true));
+                });
+                grouped.rest.forEach(function (opt) {
+                    locationSelect.appendChild(option(opt.value, opt.label, false));
+                });
+
+                if (autofill && grouped.mapped.length) {
+                    // Picking a Process answers Location: its only site for 81 of the
+                    // 89 processes, and the first of the two or three for the rest,
+                    // which the user can then correct.
+                    locationSelect.value = grouped.mapped[0].value;
+                } else if (previous) {
+                    locationSelect.value = previous;
+                }
+
+                describeLocation();
+                setState(steps.location, locationSelect.value ? "is-set" : "is-ready");
+                locationCombo.refresh();
+                if (locationSelect.value) { clearError("location"); }
+                setState(steps.process, processSelect.value ? "is-set" : "is-ready");
+            }
+
+            processSelect.addEventListener("change", function () {
+                processCombo.refresh();
+                clearError("process");
+                cascade(true);
+            });
+
+            locationSelect.addEventListener("change", function () {
+                describeLocation();
+                setState(steps.location, locationSelect.value ? "is-set" : "is-ready");
+                if (locationSelect.value) { clearError("location"); }
+            });
+
+            if (fileInput) {
+                fileInput.addEventListener("change", function () {
+                    setState(steps.file, fileInput.files && fileInput.files.length ? "is-set" : "is-ready");
+                });
+                setState(steps.file, fileInput.files && fileInput.files.length ? "is-set" : "is-ready");
+            }
+
+            // Report every missing field at once, in the field, in one voice. The
+            // server enforces the same rules regardless of what happens here.
+            form.addEventListener("submit", function (event) {
+                var missing = null;
+
+                clearError("process");
+                clearError("location");
+                clearError("file");
+
+                if (!processSelect.value) {
+                    showError("process", "Pick a process.");
+                    setState(steps.process, "is-ready");
+                    missing = missing || processCombo;
+                }
+                if (!locationSelect.value) {
+                    showError("location", "Pick a location.");
+                    missing = missing || locationCombo;
+                }
+                if (fileInput && !(fileInput.files && fileInput.files.length)) {
+                    showError("file", "Choose a downtime file to upload.");
+                    missing = missing || { focus: function () { fileInput.focus(); } };
+                }
+
+                if (missing) {
+                    event.preventDefault();
+                    missing.focus();
+                }
+            });
+
+            // Run once on load so a bound form (an upload that failed validation)
+            // comes back with its Process and a correctly restricted Location.
+            cascade(false);
+            processCombo.refresh();
+        }
+
+        document.querySelectorAll("form.upload-form").forEach(wire);
+    })();
+</script>
+{% endblock %}
