@@ -35,7 +35,10 @@ AUTH_USER_MODEL = 'users.User'
 SECRET_KEY = 'django-insecure-#1#*p7ua#&3n#gxjswc3g0pks7q+^e3&76l8^gzf8q_!f-6q(t'
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+# Off unless the environment turns it on. docker-compose sets DEBUG=0 for the
+# web container; with debug on, a mistyped URL shows Django's page listing every
+# route instead of the portal's 404 page, and a crash shows a full traceback.
+DEBUG = os.environ.get('DEBUG', '0').strip().lower() in ('1', 'true', 'yes')
 
 ALLOWED_HOSTS = ['localhost', '0.0.0.0', '127.0.0.1', '10.140.28.7', '172.20.122.231']
 
@@ -227,6 +230,15 @@ L2_PENDING_NOTIFY_EMAIL = os.environ.get(
 HRMS_NOTIFY_EMAILS = [
     address.strip()
     for address in os.environ.get('HRMS_NOTIFY_EMAILS', '').split(',')
+    if address.strip()
+]
+
+# Added on top of the above for failures only: whoever has to act when an L2
+# approval does not reach HRMS (locked period, attendance already processed,
+# transfer or script error) without also receiving every success notice.
+HRMS_FAILURE_NOTIFY_EMAILS = [
+    address.strip()
+    for address in os.environ.get('HRMS_FAILURE_NOTIFY_EMAILS', '').split(',')
     if address.strip()
 ]
 

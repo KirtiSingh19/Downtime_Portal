@@ -1573,27 +1573,26 @@ class ApprovalChainTests(DowntimeWorkflowTestCase):
         self.assertContains(response, "Unlock")
 
     @patch(SCP_TARGET)
-    def test_failed_delivery_releases_the_approval(self, mock_scp):
-        """A file that never reached HRMS must not be recorded as delivered."""
+    def test_failed_delivery_keeps_the_approval(self, mock_scp):
+        """Once approved, a file leaves the queue for good and is not retried."""
         mock_scp.return_value = False  # transfer failed
 
         self.release_to_l2()
         response = self.approve_as(self.l2, "/approve-l2/")
 
         self.file.refresh_from_db()
-        self.assertFalse(self.file.approved_by_l2)
-        self.assertIsNone(self.file.approved_by_l2_user)
-        self.assertIsNone(self.file.approved_at_l2)
+        self.assertTrue(self.file.approved_by_l2)
+        self.assertEqual(self.file.approved_by_l2_user, self.l2)
+        self.assertIn("could not be copied", self.file.last_delivery_error)
 
         text = " ".join(b for _, b in self.messages_of(response))
-        self.assertIn("could NOT be delivered to HRMS", text)
+        self.assertIn("could NOT be", text)
 
-        # Still retryable.
+        # Off the pending queue, onto File Status.
         self.client.force_login(self.l2)
-        self.assertEqual(
-            [f.id for f in self.client.get("/approve-l2/").context["files"]],
-            [self.file.id],
-        )
+        page = self.client.get("/approve-l2/")
+        self.assertEqual(list(page.context["files"]), [])
+        self.assertIn(self.file, page.context["approved_files"])
 
     @patch(SCP_TARGET)
     def test_l2_approval_pushes_to_hrms_once(self, mock_scp):
@@ -2277,10 +2276,11 @@ class PendingReminderEmailTests(DowntimeWorkflowTestCase):
 
 
 class LockedAttendanceMessageTests(DowntimeWorkflowTestCase):
-    """A locked attendance period reads as that, not as a delivery fault."""
+    """Delivery errors show on File Status, never in the pending queue."""
 
     LOCKED = ("HRMS rejected all 23 record(s). "
               "Reason: Attendence is already processed")
+    INVALID = "HRMS rejected all 23 record(s). Reason: Invalid EmpCode"
 
     def setUp(self):
         super().setUp()
@@ -2289,66 +2289,101 @@ class LockedAttendanceMessageTests(DowntimeWorkflowTestCase):
         self.client.force_login(self.l1_a)
         self.client.post("/approve/", {"file_id": self.file.id, "unlock_and_save": "1"})
 
-    def render_l2(self):
-        from users.views import source_is_available
-        base = dict(is_split=True, rejected_by_l1=False,
-                    approved_by_l2=False, rejected_by_l2=False)
-        pend = list(UploadedFile.objects.filter(**base))
-        for f in pend:
-            f.source_available = source_is_available(f)
-
-        class Req:
-            def __init__(self, user):
-                self.user = user
-
-        return render_to_string("users/approval_l2.html", {
-            "request": Req(self.l2), "messages": [],
-            "files": [f for f in pend if f.l1_status == "unlock"],
-            "locked_files": [f for f in pend if f.l1_status != "unlock"],
-            "approved_files": [], "rejected_files": [],
-        })
-
-    def mark_failed(self, reason):
+    def fail_in_task(self, reason):
+        """Approve as L2, then fail the delivery the way upload_to_hrms does."""
+        from users.tasks import _record_delivery_failure
         UploadedFile.objects.filter(pk=self.file.pk).update(
-            last_delivery_error=reason, delivery_attempts=1,
-            last_delivery_attempt_at=now(),
+            approved_by_l2=True, approved_by_l2_user=self.l2, approved_at_l2=now(),
+        )
+        _record_delivery_failure(self.file, reason)
+        self.file.refresh_from_db()
+
+    def test_a_locked_period_goes_back_to_l1_files_to_mark(self):
+        self.fail_in_task(self.LOCKED)
+
+        self.assertFalse(self.file.approved_by_l2)
+        self.assertIsNone(self.file.approved_by_l2_user)
+        self.assertEqual(self.file.l1_status, "")
+
+        self.client.force_login(self.l1_a)
+        l1 = self.client.get("/approve/")
+        self.assertIn(self.file, l1.context["files"])
+        self.assertContains(l1, "Returned: Attendance already processed")
+
+        l2 = self.l2_page()
+        self.assertEqual(list(l2.context["files"]), [])
+        self.assertEqual(list(l2.context["locked_files"]), [])
+        self.assertEqual(list(l2.context["approved_files"]), [])
+
+    def test_a_returned_file_can_go_round_again(self):
+        self.fail_in_task(self.LOCKED)
+
+        self.client.force_login(self.l1_a)
+        self.client.post("/approve/", {"file_id": self.file.id, "unlock_and_save": "1"})
+
+        self.assertEqual([f.id for f in self.l2_page().context["files"]],
+                         [self.file.id])
+
+    def test_other_failures_stay_with_l2(self):
+        self.fail_in_task(self.INVALID)
+
+        self.assertTrue(self.file.approved_by_l2)
+        self.assertEqual(self.file.l1_status, "unlock")
+        self.assertIn(self.file, self.l2_page().context["approved_files"])
+
+    def l2_page(self):
+        self.client.force_login(self.l2)
+        return self.client.get("/approve-l2/")
+
+    def mark_approved_and_failed(self, reason):
+        UploadedFile.objects.filter(pk=self.file.pk).update(
+            approved_by_l2=True, approved_by_l2_user=self.l2,
+            approved_at_l2=now(), last_delivery_error=reason,
+            delivery_attempts=1, last_delivery_attempt_at=now(),
         )
 
-    def test_a_locked_period_is_named_as_such(self):
-        self.mark_failed(self.LOCKED)
+    def test_a_pending_file_shows_only_pending(self):
+        response = self.l2_page()
 
-        html = self.render_l2()
+        self.assertEqual([f.id for f in response.context["files"]], [self.file.id])
+        html = response.content.decode()
+        self.assertIn('<span class="pill pill-pending">Pending</span>', html)
+        self.assertNotIn("HRMS failed", html)
 
-        self.assertIn("Attendance is already Processed", html)
-        self.assertIn("HRMS Locked", html)
+    def test_a_failed_file_leaves_pending_and_shows_its_error(self):
+        self.mark_approved_and_failed(self.INVALID)
+
+        response = self.l2_page()
+
+        self.assertEqual(list(response.context["files"]), [])
+        self.assertIn(self.file, response.context["approved_files"])
+        html = response.content.decode()
+        self.assertIn("HRMS failed", html)
+        self.assertIn("All records rejected", html)
 
     def test_the_record_count_is_not_shown(self):
-        """The count is noise here, and is not hardcoded anywhere."""
-        self.mark_failed(self.LOCKED)
+        """The cell shows the short label; the full text is only the tooltip."""
+        self.mark_approved_and_failed(self.INVALID)
 
-        self.assertNotIn("rejected all 23 record(s)", self.render_l2())
+        html = self.l2_page().content.decode()
 
-    def test_capitalisation_from_hrms_does_not_matter(self):
-        self.mark_failed("HRMS rejected all 6 record(s). "
-                         "Reason: Attendance is Already Processed")
+        self.assertIn('title="%s"' % self.INVALID, html)
+        self.assertNotIn(">%s<" % self.INVALID, html)
 
-        self.assertIn("HRMS Locked", self.render_l2())
-
-    def test_other_failures_keep_their_own_message(self):
-        for reason in ("HRMS rejected all 5 record(s). Reason: Invalid EmpCode",
-                       "HRMS rejected the login (portal said: 'valid password').",
-                       "The file could not be copied to the HRMS host."):
+    def test_other_failures_get_their_own_short_label(self):
+        for reason, label in (
+            ("HRMS rejected all 5 record(s). Reason: Invalid EmpCode",
+             "All records rejected"),
+            ("HRMS rejected the login (portal said: 'valid password').",
+             "HRMS login failed"),
+            ("The file could not be copied to the HRMS host.",
+             "Transfer to HRMS host failed"),
+        ):
             with self.subTest(reason=reason):
-                self.mark_failed(reason)
-                html = self.render_l2()
-                self.assertIn("Delivery failed", html)
-                self.assertNotIn("HRMS Locked", html)
-
-    def test_a_file_with_no_failure_is_unaffected(self):
-        html = self.render_l2()
-
-        self.assertIn("Pending L2", html)
-        self.assertNotIn("HRMS Locked", html)
+                self.mark_approved_and_failed(reason)
+                html = self.l2_page().content.decode()
+                self.assertIn(label, html)
+                self.assertNotIn("Attendance already processed", html)
 
 
 class AllowedProcessTests(TestCase):

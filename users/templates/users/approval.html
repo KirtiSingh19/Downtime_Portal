@@ -102,6 +102,16 @@
                                     {% else %}
                                         <span class="pill pill-bad">Lock</span>
                                     {% endif %}
+                                    {% comment %}
+                                    Sent back by HRMS: L2 approved it but the
+                                    attendance period was already processed.
+                                    {% endcomment %}
+                                    {% if 'already processed' in file.last_delivery_error|lower %}
+                                    <div class="muted" style="margin-top:4px; font-size:12px;"
+                                        title="{{ file.last_delivery_error }}">
+                                        Returned: Attendance already processed
+                                    </div>
+                                    {% endif %}
                                 </td>
                                 <td>
                                     <div class="cell-actions">
