@@ -139,42 +139,12 @@
                             <td class="mono">{{ file.l1_status_by.username|default:"—" }}</td>
                             <td class="mono muted">{{ file.timestamp|timezone:"Asia/Kolkata"|date:"d-m-Y H:i" }}</td>
                             <td>
-                                {% if not file.source_available %}
-                                <span class="pill pill-bad">Source missing</span>
-                                {% elif file.last_delivery_error %}
                                 {% comment %}
-                                This file was approved before and came back:
-                                the delivery to HRMS failed and the approval
-                                was rolled back. Saying so stops it looking
-                                like a file nobody has touched.
+                                Only files awaiting L2 approval are listed here,
+                                so the status is always Pending. Delivery errors
+                                are shown on the File Status tab once approved.
                                 {% endcomment %}
-                                {% comment %}
-                                A locked attendance period is reported in
-                                HRMS's own words, so it reads as the
-                                business state it is rather than as a
-                                delivery fault. Matched on the reason
-                                HRMS returned - lower-cased so a change of
-                                capitalisation on their side still hits.
-                                Every other failure keeps its own message.
-                                {% endcomment %}
-                                {% if 'already processed' in file.last_delivery_error|lower %}
-                                <span class="pill pill-bad">Attendance is already Processed</span>
-                                <div class="muted wrap" style="margin-top:4px; font-size:12px;">
-                                    <strong>HRMS Locked</strong><br>
-                                    Attempt {{ file.delivery_attempts }} &middot;
-                                    {{ file.last_delivery_attempt_at|timezone:"Asia/Kolkata"|date:"d-m-Y H:i" }}
-                                </div>
-                                {% else %}
-                                <span class="pill pill-bad">Delivery failed</span>
-                                <div class="muted wrap" style="margin-top:4px; font-size:12px;">
-                                    {{ file.last_delivery_error }}<br>
-                                    Attempt {{ file.delivery_attempts }} &middot;
-                                    {{ file.last_delivery_attempt_at|timezone:"Asia/Kolkata"|date:"d-m-Y H:i" }}
-                                </div>
-                                {% endif %}
-                                {% else %}
-                                <span class="pill pill-pending">Pending L2</span>
-                                {% endif %}
+                                <span class="pill pill-pending">Pending</span>
                             </td>
                             <td>
                                 <div class="cell-actions">
@@ -278,6 +248,7 @@
                             <th>Status</th>
                             <th>Decided</th>
                             <th>Reason if rejected</th>
+                            <th>Error</th>
                             <th>Actions</th>
                         </tr>
                     </thead>
@@ -296,10 +267,23 @@
                                 {% endif %}
                             </td>
                             <td class="mono muted">{{ file.timestamp|timezone:"Asia/Kolkata"|date:"d-m-Y H:i" }}</td>
-                            <td><span class="pill pill-ok">Sent to HRMS</span></td>
+                            <td>
+                                {% if file.last_delivery_error %}
+                                <span class="pill pill-bad">HRMS failed</span>
+                                {% else %}
+                                <span class="pill pill-ok">Sent to HRMS</span>
+                                {% endif %}
+                            </td>
                             <td class="mono muted">{{ file.approved_at_l2|timezone:"Asia/Kolkata"|date:"d-m-Y H:i" }}
                             </td>
                             <td><span class="muted">—</span></td>
+                            {% if file.last_delivery_error %}
+                            <td title="{{ file.last_delivery_error }}">
+                                <span class="pill pill-bad">{{ file.last_delivery_error|short_error }}</span>
+                            </td>
+                            {% else %}
+                            <td><span class="muted">—</span></td>
+                            {% endif %}
                             <td>
                                 <div class="cell-actions">
                                     <a href="{% url 'view_file' file.id %}" class="btn btn-sm btn-primary">View</a>
@@ -326,6 +310,7 @@
                             <td class="mono muted">{{ file.rejected_at_l2|timezone:"Asia/Kolkata"|date:"d-m-Y H:i" }}
                             </td>
                             <td class="wrap">{{ file.rejection_reason_l2 }}</td>
+                            <td><span class="muted">—</span></td>
                             <td>
                                 <div class="cell-actions">
                                     <a href="{% url 'view_file' file.id %}" class="btn btn-sm btn-primary">View</a>

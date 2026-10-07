@@ -46,7 +46,13 @@ urlpatterns += [
     ),
 ]
 
-# Static is only needed by the Django admin; in development Django serves it
-# from STATIC_ROOT.
-if settings.DEBUG:
-    urlpatterns += static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)
+# Static is only needed by the Django admin. Served whatever DEBUG is set to,
+# for the same reason as media above: gunicorn serves nothing on its own, so
+# turning debug off would otherwise leave the admin unstyled.
+urlpatterns += [
+    re_path(
+        r'^%s(?P<path>.*)$' % settings.STATIC_URL.lstrip('/'),
+        serve,
+        {'document_root': settings.STATIC_ROOT},
+    ),
+]

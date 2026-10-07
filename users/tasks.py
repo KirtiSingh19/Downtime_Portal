@@ -15,6 +15,7 @@ import logging
 import re
 import tempfile
 from django.db import InterfaceError, OperationalError
+from django.db.models import F
 from django.utils.html import escape
 from django.utils.timezone import localtime
 from pytz import timezone as _timezone
@@ -300,6 +301,8 @@ def _notify_hrms_outcome(file_record, original_file, success, hrms_status,
                          attachments=None):
     """Mail the HRMS outcome to the standing recipients and the file's uploader.
 
+    Failures also go to HRMS_FAILURE_NOTIFY_EMAILS.
+
     Sent once per outcome per task run. A Celery retry keeps its task id, so a
     retried run does not mail twice; a fresh L2 approval is a new run and does.
 
@@ -320,6 +323,10 @@ def _notify_hrms_outcome(file_record, original_file, success, hrms_status,
     # here escapes into upload_to_hrms's error handling, which would roll back
     # an approval HRMS has already accepted.
     recipients = list(getattr(settings, "HRMS_NOTIFY_EMAILS", None) or [])
+    if not success:
+        for address in getattr(settings, "HRMS_FAILURE_NOTIFY_EMAILS", None) or []:
+            if address not in recipients:
+                recipients.append(address)
     # The MIS user who uploaded it, taken from the record rather than a list.
     uploader = getattr(getattr(file_record, "uploaded_by", None), "email", "") or ""
     uploader = uploader.strip()
@@ -344,17 +351,12 @@ def _notify_hrms_outcome(file_record, original_file, success, hrms_status,
     when = localtime(now(), ist).strftime("%d-%m-%Y %H:%M:%S")
     process = getattr(file_record, "process", "") or "-"
 
-    if success:
-        l2_state = "Approved by L2%s%s" % (
-            " by %s" % l2_user if l2_user else "",
-            " on %s" % localtime(l2_at, ist).strftime("%d-%m-%Y %H:%M") if l2_at else "",
-        )
-    else:
-        # The approval has already been rolled back by this point, so saying
-        # only "not approved" would misdescribe what the L2 user actually did.
-        l2_state = "Approved by L2%s, then released because the file was not delivered" % (
-            " by %s" % l2_user if l2_user else "",
-        )
+    # The approval stands whatever HRMS does with the file; failures are not
+    # retried and the file is not returned to the L2 queue.
+    l2_state = "Approved by L2%s%s" % (
+        " by %s" % l2_user if l2_user else "",
+        " on %s" % localtime(l2_at, ist).strftime("%d-%m-%Y %H:%M") if l2_at else "",
+    )
 
     rows = [
         ("Process", process),
@@ -385,8 +387,13 @@ def _notify_hrms_outcome(file_record, original_file, success, hrms_status,
         escape(
             "The file below was uploaded to HRMS successfully."
             if success else
+            "The file below was approved by L2 but HRMS reported the attendance "
+            "as already processed. It has been sent back to L1 (Files to mark) "
+            "to be marked again."
+            if is_hrms_locked(error) else
             "The file below was approved by L2 but could not be delivered to "
-            "HRMS. The approval has been released and the file is pending again."
+            "HRMS. It will not be retried; the error is shown under File Status "
+            "on the L2 page."
         ),
         "".join(
             "<tr><th align='left'>%s</th><td>%s</td></tr>" % (escape(l), escape(str(v)))
@@ -428,42 +435,57 @@ def _notify_hrms_outcome(file_record, original_file, success, hrms_status,
     return True
 
 
-def _release_l2_approval(file_record, reason="", attempts=3):
-    """Return a file to the L2 queue after a failed HRMS upload.
+def is_hrms_locked(error):
+    """True when HRMS refused the file because attendance is already processed.
 
-    Nothing reached HRMS, so the L2 approval must not stand. L1 approval is left
-    intact: the file only needs re-approving at the stage that failed.
+    Matched on HRMS's own wording, which spells it "Attendence"; lower-cased so a
+    change of capitalisation on their side still hits.
+    """
+    return "already processed" in (error or "").lower()
+
+
+# Clears the L2 approval and the L1 mark, which puts the file back in L1's
+# Files to mark tab and takes it out of L2 entirely.
+SEND_BACK_TO_L1 = dict(
+    approved_by_l2=False, approved_by_l2_user=None, approved_at_l2=None,
+    l1_status='', l1_status_by=None, l1_status_at=None,
+)
+
+
+def _record_delivery_failure(file_record, reason="", attempts=3):
+    """Record why an approved file did not reach HRMS.
+
+    The L2 approval is kept: once approved, a file leaves the pending queue for
+    good and is not retried. The error is what the L2 File Status tab shows.
+
+    The one exception is an HRMS locked period ("Attendance already processed"):
+    that file goes back to L1 to be marked again, and from there through L2 and
+    HRMS once more.
 
     Never raises. This runs inside error handling, and a write that fails here
-    must not mask the original error or stop the retry being scheduled - which
-    is exactly what happened when the database was locked.
+    must not mask the original error. The write itself is retried a few times
+    because a locked database is one of the failures being recorded.
     """
     if not file_record:
         return False
 
+    fields = dict(
+        last_delivery_error=reason or "The HRMS upload failed without a reason.",
+        last_delivery_attempt_at=now(),
+        delivery_attempts=F('delivery_attempts') + 1,
+    )
+    if is_hrms_locked(reason):
+        fields.update(SEND_BACK_TO_L1)
+
     for attempt in range(attempts):
         try:
-            file_record.approved_by_l2 = False
-            file_record.approved_by_l2_user = None
-            file_record.approved_at_l2 = None
-            # Recorded so the L2 page can say why the file is back, instead of
-            # it silently reappearing as though nothing had happened.
-            if reason:
-                file_record.last_delivery_error = reason
-                file_record.last_delivery_attempt_at = now()
-                file_record.delivery_attempts = (file_record.delivery_attempts or 0) + 1
-            file_record.save(update_fields=[
-                'approved_by_l2', 'approved_by_l2_user', 'approved_at_l2',
-                'last_delivery_error', 'last_delivery_attempt_at',
-                'delivery_attempts',
-            ])
+            UploadedFile.objects.filter(pk=file_record.pk).update(**fields)
             return True
 
         except TRANSIENT_DB_ERRORS as exc:
             if attempt == attempts - 1:
                 hrms_logger.error(
-                    "Could not release the L2 approval for %s after %s attempts: "
-                    "%s. The file is recorded as approved but was not delivered.",
+                    "Could not record the HRMS failure for %s after %s attempts: %s",
                     file_record.file.name, attempts, exc,
                 )
                 return False
@@ -471,7 +493,7 @@ def _release_l2_approval(file_record, reason="", attempts=3):
 
         except Exception as exc:
             hrms_logger.exception(
-                "Could not release the L2 approval for %s: %s",
+                "Could not record the HRMS failure for %s: %s",
                 file_record.file.name, exc,
             )
             return False
@@ -479,7 +501,7 @@ def _release_l2_approval(file_record, reason="", attempts=3):
     return False
 
 
-@shared_task(bind=True, max_retries=5)
+@shared_task(bind=True, max_retries=0)
 def upload_to_hrms(self, file_path):
     file_record = None
     # The producer and this worker need not share an OS. A Windows path arriving
@@ -514,81 +536,78 @@ def upload_to_hrms(self, file_path):
         if dry_run:
             command.append('--dry-run')
 
-        for attempt in range(5):
-            result = subprocess.run(
-                command,
-                capture_output=True,
-                text=True
-            )
-            stdout = result.stdout
-            stderr = result.stderr
+        # Run once. An approved file is never retried: a failure is recorded on
+        # the file and mailed, and the file stays approved.
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True
+        )
+        stdout = result.stdout
+        stderr = result.stderr
 
-            # A dry run deliberately stops before Import, so it never prints the
-            # success banner. Treat it as terminal: retrying it five times and
-            # un-approving the file would be wrong.
-            if dry_run and result.returncode == 0 and "Dry run complete" in stdout:
-                return f"Dry run OK: {original_file}\n{stdout}"
+        # A dry run deliberately stops before Import, so it never prints the
+        # success banner. Treat it as terminal.
+        if dry_run and result.returncode == 0 and "Dry run complete" in stdout:
+            return f"Dry run OK: {original_file}\n{stdout}"
 
-            # Check if subprocess crashed or stderr contains any exception
-            if (
-                result.returncode != 0
-                or "Script failed" in stdout
-                or "CRITICAL" in stdout
-                or "failed" in stdout.lower()
-                or "Traceback" in stderr
-                or "Exception" in stderr
-                or "NameError" in stderr
-            ):
+        # Check if subprocess crashed or stderr contains any exception
+        if (
+            result.returncode != 0
+            or "Script failed" in stdout
+            or "CRITICAL" in stdout
+            or "failed" in stdout.lower()
+            or "Traceback" in stderr
+            or "Exception" in stderr
+            or "NameError" in stderr
+        ):
 
-                reason = _describe_failure(stdout, stderr)
-                _release_l2_approval(file_record, reason)
-                with tempfile.TemporaryDirectory() as workdir:
-                    _notify_hrms_outcome(
-                        file_record, original_file, success=False,
-                        hrms_status="Failed - the upload script reported an error",
-                        error=reason, task_id=task_id,
-                        l2_user=l2_user, l2_at=l2_at,
-                        attachments=_build_agent_attachments(
-                            file_path, _rejected_report_path(stdout), workdir,
-                        ),
-                    )
-                return f"Script crash or error detected for file: {original_file}"
+            reason = _describe_failure(stdout, stderr)
+            _record_delivery_failure(file_record, reason)
+            with tempfile.TemporaryDirectory() as workdir:
+                _notify_hrms_outcome(
+                    file_record, original_file, success=False,
+                    hrms_status="Failed - the upload script reported an error",
+                    error=reason, task_id=task_id,
+                    l2_user=l2_user, l2_at=l2_at,
+                    attachments=_build_agent_attachments(
+                        file_path, _rejected_report_path(stdout), workdir,
+                    ),
+                )
+            return f"Script crash or error detected for file: {original_file}"
 
-            if "Record Saved Successfully!" in stdout:
-                uploaded, rejected = _agent_counts(stdout)
-                with tempfile.TemporaryDirectory() as workdir:
-                    _notify_hrms_outcome(
-                        file_record, original_file, success=True,
-                        hrms_status="Success - HRMS confirmed the import",
-                        task_id=task_id, l2_user=l2_user, l2_at=l2_at,
-                        uploaded_agents=uploaded, rejected_agents=rejected,
-                        attachments=_build_agent_attachments(
-                            file_path, _rejected_report_path(stdout), workdir,
-                        ),
-                    )
-                return f"Success: {original_file}\n{stdout}"
-            else:
-                if attempt < 4:
-                    time.sleep(5)
-                    continue
-                else:
+        if "Record Saved Successfully!" in stdout:
+            # Clears an error left from before approvals stopped being
+            # released, so File Status does not show a stale failure.
+            if file_record is not None:
+                UploadedFile.objects.filter(pk=file_record.pk).update(
+                    last_delivery_error=''
+                )
+            uploaded, rejected = _agent_counts(stdout)
+            with tempfile.TemporaryDirectory() as workdir:
+                _notify_hrms_outcome(
+                    file_record, original_file, success=True,
+                    hrms_status="Success - HRMS confirmed the import",
+                    task_id=task_id, l2_user=l2_user, l2_at=l2_at,
+                    uploaded_agents=uploaded, rejected_agents=rejected,
+                    attachments=_build_agent_attachments(
+                        file_path, _rejected_report_path(stdout), workdir,
+                    ),
+                )
+            return f"Success: {original_file}\n{stdout}"
 
-                    _release_l2_approval(
-                        file_record,
-                        _describe_failure(stdout, stderr)
-                        or "HRMS did not confirm the import after 5 attempts.",
-                    )
-
-                    _notify_hrms_outcome(
-                        file_record, original_file, success=False,
-                        hrms_status="Failed - HRMS did not confirm the import after 5 attempts",
-                        error=_describe_failure(stdout, stderr),
-                        task_id=task_id, l2_user=l2_user, l2_at=l2_at,
-                    )
-                    return f"Failed after 5 attempts: {original_file}\nSTDOUT: {stdout}\nSTDERR: {stderr}"
+        reason = (_describe_failure(stdout, stderr)
+                  or "HRMS did not confirm the import.")
+        _record_delivery_failure(file_record, reason)
+        _notify_hrms_outcome(
+            file_record, original_file, success=False,
+            hrms_status="Failed - HRMS did not confirm the import",
+            error=reason, task_id=task_id, l2_user=l2_user, l2_at=l2_at,
+        )
+        return f"Failed: {original_file}\nSTDOUT: {stdout}\nSTDERR: {stderr}"
 
     except subprocess.CalledProcessError as e:
-        _release_l2_approval(file_record, _describe_failure(e.stdout, e.stderr))
+        _record_delivery_failure(file_record, _describe_failure(e.stdout, e.stderr))
 
 
         _notify_hrms_outcome(
@@ -600,31 +619,18 @@ def upload_to_hrms(self, file_path):
         return f"Script failed: {original_file}\nSTDOUT: {e.stdout}\nSTDERR: {e.stderr}"
 
     except Exception as e:
-        transient = isinstance(e, TRANSIENT_DB_ERRORS)
         hrms_logger.exception(
-            "HRMS upload task failed for %s (%s): %s",
-            original_file, "transient" if transient else "not retryable", e,
+            "HRMS upload task failed for %s: %s", original_file, e,
         )
 
-        _release_l2_approval(file_record, str(e)[:400])
+        _record_delivery_failure(file_record, str(e)[:400])
 
         _notify_hrms_outcome(
             file_record, original_file, success=False,
-            hrms_status=(
-                "Failed - the upload task raised an error and will be retried"
-                if transient else
-                "Failed - the upload task raised an error and was not retried"
-            ),
+            hrms_status="Failed - the upload task raised an error",
             error=str(e)[:400],
             task_id=locals().get("task_id", ""),
             l2_user=locals().get("l2_user"), l2_at=locals().get("l2_at"),
         )
-
-        # Retry only what a retry can fix. Each retry re-runs the whole task,
-        # and the task runs the Selenium upload up to five times - so retrying a
-        # deterministic failure five more times costs twenty-five HRMS sessions
-        # and cannot succeed.
-        if transient:
-            self.retry(exc=e, countdown=10, max_retries=5)
 
         return f"Failed (not retried): {original_file}: {str(e)}"

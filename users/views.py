@@ -29,7 +29,7 @@ import uuid  # Add at the top if not already imported
 from django.core.mail import EmailMessage
 from datetime import datetime, timedelta
 import re
-from users.tasks import upload_to_hrms
+from users.tasks import _notify_hrms_outcome, _record_delivery_failure, upload_to_hrms
 from users import mapping
 
 ist = timezone("Asia/Kolkata")
@@ -420,7 +420,8 @@ def home(request):
                                 subject='Downtime Uploaded Successfully',
                                 body=summary_html,
                                 from_email=settings.DEFAULT_FROM_EMAIL,
-                                to=['rahul.kumar@iccs.in', 'mis.support@iccs.in', 'mangesh.bhayje@iccs.in','santosh.kumar@iccs.in','akshat.bhatnagar@iccs.in'],
+                                # to=['rahul.kumar@iccs.in', 'mis.support@iccs.in', 'mangesh.bhayje@iccs.in','santosh.kumar@iccs.in','akshat.bhatnagar@iccs.in'],
+                                 to=['sourabh.kumar@iccs.in'],
                             )
                             email.content_subtype = 'html'  # Set the email content to HTML
 
@@ -578,6 +579,21 @@ def _l2_claim_refused(file):
     return "This file has already been actioned by another L2 user."
 
 
+def _approval_failed(file, file_name, l2_user, hrms_status, error):
+    """Record and mail a failure that happened in the Approve request itself.
+
+    Failures after the task is queued are handled by upload_to_hrms; these two
+    never reach it. The approval stands either way - the file moves to File
+    Status with the error and is not retried. A fresh key per call so a repeated
+    failure is reported again rather than suppressed as a duplicate.
+    """
+    _record_delivery_failure(file, error)
+    _notify_hrms_outcome(
+        file, file_name, success=False, hrms_status=hrms_status, error=error,
+        task_id="approve-%s" % uuid.uuid4().hex, l2_user=l2_user.username,
+    )
+
+
 # ---------- FILE APPROVAL PAGE (L2 Users) ----------
 @login_required
 def approve_files_l2(request):
@@ -597,7 +613,11 @@ def approve_files_l2(request):
         rejected_by_l2=False,
     )
     files = pending.filter(l1_status='unlock')
-    locked_files = pending.exclude(l1_status='unlock')
+    # A file HRMS sent back as "already processed" is L1's to re-mark; it is
+    # kept off L2 entirely until L1 unlocks it again.
+    locked_files = pending.exclude(l1_status='unlock').exclude(
+        last_delivery_error__icontains='already processed'
+    )
 
     for file in files:
         file.timestamp = localtime(file.timestamp, ist)  # Convert UTC to IST
@@ -658,6 +678,12 @@ def approve_files_l2(request):
                                 "Could not queue the HRMS upload for %s: %s",
                                 approved_path, exc, exc_info=True,
                             )
+                            _approval_failed(
+                                file, os.path.basename(approved_path), request.user,
+                                "Failed - the HRMS upload could not be queued",
+                                "The HRMS upload could not be queued (Celery "
+                                "broker/worker unavailable): %s" % exc,
+                            )
                             messages.warning(
                                 request,
                                 f"File '{file.file.name}' was approved, but the HRMS "
@@ -665,25 +691,18 @@ def approve_files_l2(request):
                                 "worker and broker are running."
                             )
                     else:
-                        # Nothing reached HRMS, so the approval must not stand.
-                        # Releasing the claim returns the file to the L2 queue to be
-                        # retried once the transfer problem is resolved.
-                        UploadedFile.objects.filter(id=file.id).update(
-                            approved_by_l2=False,
-                            approved_by_l2_user=None,
-                            approved_at_l2=None,
-                            last_delivery_error=(
-                                "The file could not be copied to the HRMS host. "
-                                "See the server log for the transfer error."
-                            ),
-                            last_delivery_attempt_at=now(),
-                            delivery_attempts=F('delivery_attempts') + 1,
+                        # The approval stands and is not retried: the file moves to
+                        # File Status with the error, like any later HRMS failure.
+                        _approval_failed(
+                            file, os.path.basename(file.file.name), request.user,
+                            "Failed - the file could not be copied to the HRMS host",
+                            "The file could not be copied to the HRMS host. "
+                            "See the server log for the transfer error.",
                         )
                         messages.error(
                             request,
-                            f"File '{file.file.name}' could NOT be delivered to HRMS. "
-                            "The approval has been released and the file remains "
-                            "pending. Check the server log for the transfer error."
+                            f"File '{file.file.name}' was approved but could NOT be "
+                            "delivered to HRMS. See the File Status tab for the error."
                         )
                 else:
                     messages.warning(request, _l2_claim_refused(file))
@@ -721,7 +740,7 @@ def approve_files_l2(request):
         'files': files,
         'locked_files': locked_files,
         'approved_files': approved_files,
-        'rejected_files': rejected_files
+        'rejected_files': rejected_files,
     })
 
 

@@ -375,26 +375,18 @@ class ApprovalChainTests(DowntimeWorkflowTestCase):
         self.assertContains(response, "Unlock")
 
     @patch(SCP_TARGET)
-    def test_failed_delivery_releases_the_approval(self, mock_scp):
-        """A file that never reached HRMS must not be recorded as delivered."""
+    def test_failed_delivery_keeps_the_approval(self, mock_scp):
+        """Once approved, a file leaves the queue for good and is not retried."""
         mock_scp.return_value = False  # transfer failed
 
         self.release_to_l2()
-        response = self.approve_as(self.l2, "/approve-l2/")
+        self.approve_as(self.l2, "/approve-l2/")
 
         self.file.refresh_from_db()
-        self.assertFalse(self.file.approved_by_l2)
-        self.assertIsNone(self.file.approved_by_l2_user)
-        self.assertIsNone(self.file.approved_at_l2)
-
-        text = " ".join(b for _, b in self.messages_of(response))
-        self.assertIn("could NOT be delivered to HRMS", text)
-
-        # Still retryable.
+        self.assertTrue(self.file.approved_by_l2)
         self.client.force_login(self.l2)
         self.assertEqual(
-            [f.id for f in self.client.get("/approve-l2/").context["files"]],
-            [self.file.id],
+            list(self.client.get("/approve-l2/").context["files"]), [],
         )
 
     @patch(SCP_TARGET)
